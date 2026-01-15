@@ -1,0 +1,48 @@
+{
+  "name": "bmad-orchestrator",
+  "version": "1.0.0",
+  "description": "Parallel epic/story orchestrator for BMAD workflow with web dashboard",
+  "main": "src/server.js",
+  "bin": {
+    "bmad-orchestrator": "./src/server.js"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "cli": "node src/cli.js",
+    "install:service": "sudo cp bmad-orchestrator.service /etc/systemd/system/ && sudo systemctl daemon-reload",
+    "enable:service": "sudo systemctl enable bmad-orchestrator",
+    "start:service": "sudo systemctl start bmad-orchestrator",
+    "stop:service": "sudo systemctl stop bmad-orchestrator",
+    "status:service": "sudo systemctl status bmad-orchestrator",
+    "logs:service": "sudo journalctl -u bmad-orchestrator -f"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^12.0.0",
+    "execa": "^8.0.1",
+    "express": "^4.18.2",
+    "express-basic-auth": "^1.2.1",
+    "js-yaml": "^4.1.0",
+    "p-queue": "^8.0.1",
+    "ws": "^8.16.0"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YOUR_USERNAME/bmad-orchestrator.git"
+  },
+  "keywords": [
+    "bmad",
+    "orchestrator",
+    "ai",
+    "development",
+    "automation",
+    "claude"
+  ],
+  "author": "",
+  "license": "MIT"
+}

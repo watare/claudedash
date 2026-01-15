@@ -1,0 +1,82 @@
+# BMAD Orchestrator Configuration
+# Copy this to your project root as bmad-orchestrator.yaml
+
+# ============================================================
+# PARALLELISM SETTINGS
+# ============================================================
+# Epic batch size - how many epics to run in parallel per batch
+# Example: epicBatchSize: 2 means:
+#   - Batch 1: Epic 1 + Epic 2 run in parallel
+#   - Batch 2: Epic 3 + Epic 4 run in parallel (after batch 1 completes)
+epicBatchSize: 2
+
+# How many stories per epic to run simultaneously
+# Each story spawns a Claude Code session
+maxParallelStories: 4
+
+# Continue to next epic batch even if current batch has failures
+continueOnEpicFailure: false
+
+# ============================================================
+# CLAUDE CODE SETTINGS
+# ============================================================
+# CLI command (use full path if not in PATH)
+claudeCommand: claude
+
+# Model to use: opus, sonnet, haiku
+claudeModel: opus
+
+# Timeout per operation in milliseconds (10 min default)
+claudeTimeout: 600000
+
+# ============================================================
+# CODE REVIEW SETTINGS
+# ============================================================
+# Maximum review/fix iterations before giving up
+maxReviewIterations: 5
+
+# Stop when no issues at this severity or above
+# Options: critical, major, medium, minor
+reviewSeverityThreshold: medium
+
+# ============================================================
+# GIT SETTINGS
+# ============================================================
+# Base branch to create feature branches from
+baseBranch: main
+
+# Prefix for feature branches
+branchPrefix: "feature/"
+
+# Automatically commit changes
+autoCommit: true
+
+# Automatically push to remote
+autoPush: true
+
+# ============================================================
+# FILE PATHS (relative to project root)
+# ============================================================
+# Where to find the epics definition
+epicsFile: _bmad-output/planning-artifacts/epics.md
+
+# Sprint status tracking file
+sprintStatusFile: _bmad-output/implementation-artifacts/sprint-status.yaml
+
+# Where story files are created
+storiesDir: _bmad-output/implementation-artifacts
+
+# ============================================================
+# OUTPUT
+# ============================================================
+# Directory for orchestrator logs
+logDir: _bmad-output/orchestrator-logs
+
+# Final report location
+reportFile: _bmad-output/orchestrator-report.md
+
+# ============================================================
+# DASHBOARD SETTINGS
+# ============================================================
+# Port for the web dashboard
+dashboardPort: 3456

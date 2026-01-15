@@ -1,0 +1,33 @@
+[Unit]
+Description=BMAD Orchestrator Dashboard
+Documentation=https://github.com/YOUR_USERNAME/bmad-orchestrator
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/bmad-orchestrator
+
+# Set the project path as the first argument
+ExecStart=/usr/bin/node /home/ubuntu/bmad-orchestrator/src/server.js /home/ubuntu/gridmv --port 3456
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+
+# Environment
+Environment=NODE_ENV=production
+Environment=PORT=3456
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bmad-orchestrator
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
