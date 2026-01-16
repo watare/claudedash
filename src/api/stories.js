@@ -8,7 +8,7 @@
 import express from 'express';
 import path from 'path';
 import { compareStatus, readYamlStatus, getStoryStatus } from '../services/verification.js';
-import { authMiddleware, requireAuth } from '../auth/middleware.js';
+import { requireAuth } from '../auth/middleware.js';
 import { broadcast } from '../services/websocket.js';
 import { retryStory, canRetryStory, getRetryStats } from '../services/storyRetrier.js';
 import { registerStory, getStory } from '../services/storyTracker.js';
@@ -41,7 +41,7 @@ const asyncHandler = (fn) => (req, res, next) =>
  */
 router.post(
   '/:storyKey/verify',
-  authMiddleware,
+  requireAuth,
   asyncHandler(async (req, res) => {
     const { storyKey } = req.params;
     const { projectPath = process.cwd() } = req.body || {};
@@ -122,7 +122,7 @@ router.post(
  */
 router.get(
   '/:storyKey/verification',
-  authMiddleware,
+  requireAuth,
   asyncHandler(async (req, res) => {
     const { storyKey } = req.params;
     const { projectPath = process.cwd() } = req.query;
