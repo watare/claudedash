@@ -321,6 +321,16 @@ describe('Stories API', () => {
       vi.mocked(readYamlStatus).mockReturnValue({ success: false });
     });
 
+    it('returns 400 for invalid story ID format', async () => {
+      const response = await request(app)
+        .post('/api/stories/invalid-format/retry')
+        .send({});
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toContain('Invalid story ID format');
+      expect(response.body.code).toBe('INVALID_STORY_ID');
+    });
+
     it('returns 404 if story not found', async () => {
       vi.mocked(canRetryStory).mockReturnValue({
         canRetry: false,
@@ -328,7 +338,7 @@ describe('Stories API', () => {
       });
 
       const response = await request(app)
-        .post('/api/stories/nonexistent/retry')
+        .post('/api/stories/99-99/retry')
         .send({});
 
       expect(response.status).toBe(404);
@@ -486,6 +496,14 @@ describe('Stories API', () => {
       expect(response.body.data.canRetry).toBe(true);
     });
 
+    it('returns 400 for invalid story ID format', async () => {
+      const response = await request(app)
+        .get('/api/stories/invalid/retry-stats');
+
+      expect(response.status).toBe(400);
+      expect(response.body.code).toBe('INVALID_STORY_ID');
+    });
+
     it('returns default stats for untracked story', async () => {
       vi.mocked(getRetryStats).mockReturnValue(null);
       vi.mocked(canRetryStory).mockReturnValue({
@@ -494,7 +512,7 @@ describe('Stories API', () => {
       });
 
       const response = await request(app)
-        .get('/api/stories/unknown/retry-stats');
+        .get('/api/stories/99-99/retry-stats');
 
       expect(response.status).toBe(200);
       expect(response.body.data.retryCount).toBe(0);

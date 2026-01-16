@@ -1,7 +1,13 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { StoryList } from './StoryList';
+import { useStoriesStore } from '@/stores/storiesStore';
+import { useUIStore } from '@/stores/uiStore';
 import type { Story } from '@/types/project';
+
+// Mock the stores
+vi.mock('@/stores/storiesStore');
+vi.mock('@/stores/uiStore');
 
 const mockStories: Story[] = [
   { id: '1-1', title: 'First Story', status: 'done' },
@@ -9,7 +15,30 @@ const mockStories: Story[] = [
   { id: '1-3', title: 'Third Story', status: 'backlog' },
 ];
 
+const mockStoriesWithFailed: Story[] = [
+  { id: '1-1', title: 'First Story', status: 'done' },
+  { id: '1-2', title: 'Failed Story', status: 'failed' },
+  { id: '1-3', title: 'Killed Story', status: 'killed' },
+];
+
+const mockRetryStory = vi.fn();
+const mockAddToast = vi.fn();
+
 describe('StoryList', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+
+    // Setup default mock implementations
+    vi.mocked(useStoriesStore).mockReturnValue({
+      retryStory: mockRetryStory,
+      retryingStoryId: null,
+    } as unknown as ReturnType<typeof useStoriesStore>);
+
+    vi.mocked(useUIStore).mockReturnValue({
+      addToast: mockAddToast,
+    } as unknown as ReturnType<typeof useUIStore>);
+  });
+
   it('renders all stories', () => {
     render(<StoryList stories={mockStories} />);
     expect(screen.getByTestId('story-list')).toBeInTheDocument();
@@ -68,5 +97,131 @@ describe('StoryList', () => {
     expect(screen.getByTestId('story-item-1-1')).toBeInTheDocument();
     expect(screen.getByTestId('story-item-1-2')).toBeInTheDocument();
     expect(screen.getByTestId('story-item-1-3')).toBeInTheDocument();
+  });
+
+  // Story 4.4: Retry button tests
+  describe('retry button', () => {
+    it('shows retry button for failed stories', () => {
+      render(<StoryList stories={mockStoriesWithFailed} />);
+
+      // Should show retry buttons for failed and killed stories
+      const retryButtons = screen.getAllByTestId('retry-button');
+      expect(retryButtons).toHaveLength(2);
+    });
+
+    it('does not show retry button for non-failed stories', () => {
+      render(<StoryList stories={mockStories} />);
+
+      // No retry buttons for done, in-progress, or backlog stories
+      const retryButtons = screen.queryAllByTestId('retry-button');
+      expect(retryButtons).toHaveLength(0);
+    });
+
+    it('calls retryStory when retry button clicked', async () => {
+      mockRetryStory.mockResolvedValueOnce({ success: true });
+
+      render(<StoryList stories={mockStoriesWithFailed} />);
+
+      const retryButtons = screen.getAllByTestId('retry-button');
+      fireEvent.click(retryButtons[0]);
+
+      await waitFor(() => {
+        expect(mockRetryStory).toHaveBeenCalledWith('1-2');
+      });
+    });
+
+    it('shows success toast on successful retry', async () => {
+      mockRetryStory.mockResolvedValueOnce({ success: true });
+
+      render(<StoryList stories={mockStoriesWithFailed} />);
+
+      const retryButtons = screen.getAllByTestId('retry-button');
+      fireEvent.click(retryButtons[0]);
+
+      await waitFor(() => {
+        expect(mockAddToast).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'success',
+            message: 'Retrying Story 1-2',
+          })
+        );
+      });
+    });
+
+    it('shows warning toast when retry has warning', async () => {
+      mockRetryStory.mockResolvedValueOnce({
+        success: true,
+        warning: 'Max retries exceeded',
+      });
+
+      render(<StoryList stories={mockStoriesWithFailed} />);
+
+      const retryButtons = screen.getAllByTestId('retry-button');
+      fireEvent.click(retryButtons[0]);
+
+      await waitFor(() => {
+        expect(mockAddToast).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'warning',
+            message: 'Max retries exceeded',
+          })
+        );
+      });
+    });
+
+    it('shows error toast on failed retry', async () => {
+      mockRetryStory.mockResolvedValueOnce({ success: false });
+
+      // Mock store error state
+      vi.mocked(useStoriesStore).mockReturnValue({
+        retryStory: mockRetryStory,
+        retryingStoryId: null,
+        error: 'Story already in progress',
+      } as unknown as ReturnType<typeof useStoriesStore>);
+
+      // Need to use a modified implementation that returns error
+      vi.mocked(useStoriesStore.getState).mockReturnValue({
+        error: 'Story already in progress',
+      } as unknown as ReturnType<typeof useStoriesStore.getState>);
+
+      render(<StoryList stories={mockStoriesWithFailed} />);
+
+      const retryButtons = screen.getAllByTestId('retry-button');
+      fireEvent.click(retryButtons[0]);
+
+      await waitFor(() => {
+        expect(mockAddToast).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'error',
+          })
+        );
+      });
+    });
+
+    it('shows loading state while retrying', () => {
+      vi.mocked(useStoriesStore).mockReturnValue({
+        retryStory: mockRetryStory,
+        retryingStoryId: '1-2',
+      } as unknown as ReturnType<typeof useStoriesStore>);
+
+      render(<StoryList stories={mockStoriesWithFailed} />);
+
+      const retryButtons = screen.getAllByTestId('retry-button');
+      // The first button (for story 1-2) should show retrying state
+      expect(retryButtons[0]).toHaveTextContent('Retrying...');
+      expect(retryButtons[0]).toBeDisabled();
+    });
+
+    it('prevents opening story detail when clicking retry', async () => {
+      mockRetryStory.mockResolvedValueOnce({ success: true });
+
+      render(<StoryList stories={mockStoriesWithFailed} />);
+
+      const retryButtons = screen.getAllByTestId('retry-button');
+      fireEvent.click(retryButtons[0]);
+
+      // Story detail should not be opened
+      expect(screen.queryByTestId('story-detail')).not.toBeInTheDocument();
+    });
   });
 });

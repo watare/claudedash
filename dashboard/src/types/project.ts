@@ -4,7 +4,8 @@
 
 // Note: 'idle' status is used when no sprint status file exists
 export type ProjectStatus = 'running' | 'paused' | 'waiting' | 'failed' | 'done' | 'idle';
-export type StoryStatus = 'backlog' | 'ready-for-dev' | 'in-progress' | 'review' | 'done';
+// Note: 'failed', 'killed', and 'pending' are runtime states for retry functionality
+export type StoryStatus = 'backlog' | 'ready-for-dev' | 'in-progress' | 'review' | 'done' | 'failed' | 'killed' | 'pending';
 export type EpicStatus = 'backlog' | 'in-progress' | 'done';
 
 export interface Story {

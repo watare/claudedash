@@ -12,9 +12,12 @@ import { useEffect, useRef } from 'react';
 import { wsClient, type WSMessage } from '../services/websocket';
 import { useAgentsStore } from '../stores/agentsStore';
 import { useProjectsStore } from '../stores/projectsStore';
+import { useStoriesStore } from '../stores/storiesStore';
+import { useLogsStore } from '../stores/logsStore';
 import { useUIStore } from '../stores/uiStore';
 import { getAccessToken } from '../services/api';
 import type { Agent } from '../types/agent';
+import type { StoryStatus } from '../types/project';
 
 // Type definitions for WebSocket event payloads
 interface AgentSpawnPayload {
@@ -34,6 +37,10 @@ interface AgentCompletePayload {
   agentId: string;
 }
 
+interface AgentKillPayload {
+  agentId: string;
+}
+
 interface AgentStuckPayload {
   agentId: string;
   duration: number;
@@ -49,6 +56,22 @@ interface ReconnectingPayload {
   delay: number;
 }
 
+// Story 4.4: Story retry event payload
+interface StoryRetryPayload {
+  storyId: string;
+  status: StoryStatus;
+}
+
+// Story 4.5: Log event payload
+interface LogPayload {
+  id: string | number;
+  time?: string;
+  timestamp?: string;
+  message: string;
+  level?: 'error' | 'warn' | 'info' | 'debug';
+  agentId?: string;
+}
+
 /**
  * Hook to manage WebSocket connection and event handling.
  * Should be called once in the top-level authenticated component.
@@ -59,6 +82,8 @@ export function useWebSocket() {
   // Store actions
   const { addAgent, updateAgent, removeAgent, fetchAgents } = useAgentsStore();
   const { fetchProjects } = useProjectsStore();
+  const { updateStoryStatus } = useStoriesStore();
+  const { appendLog } = useLogsStore();
   const { setConnectionStatus, addToast } = useUIStore();
 
   useEffect(() => {
@@ -118,6 +143,11 @@ export function useWebSocket() {
       removeAgent(data.agentId);
     });
 
+    const unsubAgentKill = wsClient.on('agent:kill', (msg: WSMessage) => {
+      const data = msg.data as AgentKillPayload;
+      removeAgent(data.agentId);
+    });
+
     const unsubAgentStuck = wsClient.on('agent:stuck', (msg: WSMessage) => {
       const data = msg.data as AgentStuckPayload;
       const agents = useAgentsStore.getState().agents;
@@ -148,6 +178,26 @@ export function useWebSocket() {
       }
     });
 
+    // Story 4.4: Story retry events (AC2, AC6)
+    const unsubStoryRetry = wsClient.on('story:retry', (msg: WSMessage) => {
+      const data = msg.data as StoryRetryPayload;
+      updateStoryStatus(data.storyId, data.status);
+    });
+
+    // Story 4.5: Log events for real-time streaming
+    const unsubLog = wsClient.on('log', (msg: WSMessage) => {
+      const data = msg.data as LogPayload;
+      // Route log to appropriate agent or use 'orchestrator' as fallback
+      const agentId = data.agentId || 'orchestrator';
+      appendLog(agentId, {
+        id: data.id,
+        timestamp: data.time || data.timestamp || msg.timestamp || new Date().toISOString(),
+        message: data.message,
+        level: data.level || 'info',
+        agentId,
+      });
+    });
+
     // Re-sync on reconnection
     const unsubReconnected = wsClient.on('connection:established', () => {
       if (import.meta.env.DEV) console.log('Re-syncing state after reconnection');
@@ -166,12 +216,15 @@ export function useWebSocket() {
       unsubAgentSpawn();
       unsubAgentOutput();
       unsubAgentComplete();
+      unsubAgentKill();
       unsubAgentStuck();
       unsubProjectUpdate();
       unsubStoryVerified();
+      unsubStoryRetry();
+      unsubLog();
       unsubReconnected();
       wsClient.disconnect();
       isInitialized.current = false;
     };
-  }, [addAgent, updateAgent, removeAgent, fetchAgents, fetchProjects, setConnectionStatus, addToast]);
+  }, [addAgent, updateAgent, removeAgent, fetchAgents, fetchProjects, updateStoryStatus, appendLog, setConnectionStatus, addToast]);
 }

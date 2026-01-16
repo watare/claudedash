@@ -92,11 +92,13 @@ describe('AgentRow', () => {
     expect(screen.getByRole('button', { name: /view logs/i })).toBeInTheDocument();
   });
 
-  it('does not show action buttons for healthy running agent', () => {
+  it('shows Kill button for healthy running agent (AC1: always visible)', () => {
     const agent = createMockAgent({ duration: 300 }); // 5 minutes
     render(<AgentRow agent={agent} onKill={mockOnKill} onViewLogs={mockOnViewLogs} />);
 
-    expect(screen.queryByRole('button', { name: /kill/i })).not.toBeInTheDocument();
+    // Kill button always visible per AC1
+    expect(screen.getByRole('button', { name: /kill/i })).toBeInTheDocument();
+    // View Logs only shown for warning/stuck agents
     expect(screen.queryByRole('button', { name: /view logs/i })).not.toBeInTheDocument();
   });
 

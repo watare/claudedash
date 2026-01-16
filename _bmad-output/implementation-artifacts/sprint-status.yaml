@@ -1,0 +1,101 @@
+# generated: 2026-01-15
+# project: bmad-orchestrator
+# tracking_system: file-system
+# story_location: _bmad-output/implementation-artifacts
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Epic Status Transitions:
+#   - backlog → in-progress: Automatically when first story is created (via create-story)
+#   - in-progress → done: Manually when all stories reach 'done' status
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created in stories folder
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+#
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when first story is created
+# - Stories can be worked in parallel if team capacity allows
+# - SM typically creates next story after previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+
+generated: 2026-01-15
+project: bmad-orchestrator
+tracking_system: file-system
+story_location: _bmad-output/implementation-artifacts
+
+development_status:
+  # Epic 1: Secure Dashboard Foundation
+  epic-1: done
+  1-1-dashboard-scaffolding: done
+  1-2-sqlite-database-setup: done
+  1-3-secrets-configuration-system: done
+  1-4-github-oauth-authentication: done
+  1-5-password-fallback-authentication: done
+  1-6-auth-frontend-components: done
+  1-7-protected-routes-session-management: done
+  epic-1-retrospective: optional
+
+  # Epic 2: Real-Time Project Monitoring
+  epic-2: done
+  2-1-dashboard-layout-navigation: done
+  2-2-projects-zustand-store-api: done
+  2-3-project-cards-display: done
+  2-4-agents-zustand-store-api: done
+  2-5-agent-activity-panel: done
+  2-6-websocket-real-time-updates: done
+  2-7-epic-story-progress-display: done
+  epic-2-retrospective: optional
+
+  # Epic 3: Status Verification System
+  epic-3: done
+  3-1-yaml-status-reader-service: done
+  3-2-status-comparison-engine: done
+  3-3-re-verification-workflow-trigger: done
+  3-4-verification-blocking-logic: done  # Implemented alongside 3.3, see 3-3 story notes
+  3-5-verification-logging-audit: done
+  3-6-verification-status-ui-components: done
+  epic-3-retrospective: optional
+
+  # Epic 4: Agent Control & Recovery
+  epic-4: in-progress
+  4-1-kill-agent-api-backend: done
+  4-2-kill-agent-dashboard-button: done
+  4-3-retry-story-api-backend: done
+  4-4-retry-story-dashboard-button: done
+  4-5-log-viewer-panel: review
+  4-6-stuck-agent-detection-alerts: ready-for-dev
+  4-7-execution-history-view: ready-for-dev
+  epic-4-retrospective: optional
+
+  # Epic 5: Notifications & Alerts
+  epic-5: in-progress
+  5-1-notification-service-backend: ready-for-dev
+  5-2-toast-notification-ui: ready-for-dev
+  5-3-approval-required-notification: ready-for-dev
+  5-4-stuck-agent-notification: ready-for-dev
+  5-5-project-epic-completion-notification: ready-for-dev
+  5-6-critical-error-notification: ready-for-dev
+  5-7-notification-preferences-configuration: ready-for-dev
+  epic-5-retrospective: optional
+
+  # Epic 6: Visual Verification (Phase 2 - Deferred)
+  epic-6: backlog
+  epic-6-retrospective: optional
+
+  # Epic 7: Multi-Project Support (Phase 3 - Deferred)
+  epic-7: backlog
+  epic-7-retrospective: optional

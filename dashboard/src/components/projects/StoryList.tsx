@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { StoryStatusBadge } from '@/components/ui/StoryStatusBadge';
 import { StoryDetail } from './StoryDetail';
+import { RetryButton } from '@/components/stories/RetryButton';
+import { useStoriesStore } from '@/stores/storiesStore';
+import { useUIStore } from '@/stores/uiStore';
 import type { Story } from '@/types/project';
 
 interface StoryListProps {
@@ -14,6 +17,42 @@ interface StoryListProps {
  */
 export function StoryList({ stories, currentStoryId }: StoryListProps) {
   const [selectedStory, setSelectedStory] = useState<Story | null>(null);
+  const { retryStory, retryingStoryId } = useStoriesStore();
+  const { addToast } = useUIStore();
+
+  const handleRetry = async (storyId: string, e: React.MouseEvent) => {
+    // Prevent opening story detail when clicking retry
+    e.stopPropagation();
+
+    const result = await retryStory(storyId);
+
+    if (result.success) {
+      // AC2: Success toast
+      addToast({
+        type: 'success',
+        message: `Retrying Story ${storyId}`,
+        duration: 5000,
+      });
+
+      // AC3: Warning toast if max retries exceeded
+      if (result.warning) {
+        addToast({
+          type: 'warning',
+          message: result.warning,
+        });
+      }
+    } else {
+      // AC4: Error toast
+      addToast({
+        type: 'error',
+        message: useStoriesStore.getState().error || 'Failed to retry story',
+      });
+    }
+  };
+
+  // Helper to check if story is retryable
+  const isRetryable = (status: Story['status']) =>
+    status === 'failed' || status === 'killed';
 
   if (stories.length === 0) {
     return (
@@ -29,12 +68,20 @@ export function StoryList({ stories, currentStoryId }: StoryListProps) {
         const isCurrent = story.id === currentStoryId;
 
         return (
-          <button
+          <div
             key={story.id}
-            className={`w-full px-3 py-2 rounded flex items-center justify-between text-left ${
+            role="button"
+            tabIndex={0}
+            className={`w-full px-3 py-2 rounded flex items-center justify-between text-left cursor-pointer ${
               isCurrent ? 'bg-[#F0B90B]/10' : 'hover:bg-[#2B3139]'
             }`}
             onClick={() => setSelectedStory(story)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setSelectedStory(story);
+              }
+            }}
             data-testid={`story-item-${story.id}`}
           >
             <div className="flex items-center gap-2">
@@ -47,8 +94,17 @@ export function StoryList({ stories, currentStoryId }: StoryListProps) {
                 {story.id} {story.title}
               </span>
             </div>
-            <StoryStatusBadge status={story.status} />
-          </button>
+            <div className="flex items-center gap-2">
+              {/* AC1: Retry button for failed/killed stories */}
+              {isRetryable(story.status) && (
+                <RetryButton
+                  onRetry={(e) => handleRetry(story.id, e)}
+                  isRetrying={retryingStoryId === story.id}
+                />
+              )}
+              <StoryStatusBadge status={story.status} />
+            </div>
+          </div>
         );
       })}
 

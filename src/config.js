@@ -30,6 +30,9 @@ export const defaultConfig = {
   maxReviewIterations: 5,     // Max fix cycles before giving up
   reviewSeverityThreshold: 'medium', // Stop when no issues at this level or above
 
+  // Story retry settings (Story 4.3)
+  maxStoryRetries: 3,         // Maximum retry attempts before warning
+
   // Git settings
   baseBranch: 'main',
   branchPrefix: 'feature/',

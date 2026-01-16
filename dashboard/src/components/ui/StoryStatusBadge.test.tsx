@@ -46,4 +46,36 @@ describe('StoryStatusBadge', () => {
     expect(badge).toHaveClass('bg-[#0ECB81]/20');
     expect(badge).toHaveClass('text-[#0ECB81]');
   });
+
+  // Story 4.4: New status types
+  it('displays failed status with red styling', () => {
+    render(<StoryStatusBadge status="failed" />);
+    const badge = screen.getByTestId('story-status-badge');
+    expect(badge).toHaveTextContent('Failed');
+    expect(badge).toHaveClass('bg-[#F6465D]/20');
+    expect(badge).toHaveClass('text-[#F6465D]');
+  });
+
+  it('displays killed status with red styling', () => {
+    render(<StoryStatusBadge status="killed" />);
+    const badge = screen.getByTestId('story-status-badge');
+    expect(badge).toHaveTextContent('Killed');
+    expect(badge).toHaveClass('bg-[#F6465D]/20');
+    expect(badge).toHaveClass('text-[#F6465D]');
+  });
+
+  it('displays pending status with gray styling and animation', () => {
+    render(<StoryStatusBadge status="pending" />);
+    const badge = screen.getByTestId('story-status-badge');
+    expect(badge).toHaveTextContent('Pending');
+    expect(badge).toHaveClass('bg-[#848E9C]/20');
+    expect(badge).toHaveClass('text-[#848E9C]');
+    expect(badge).toHaveClass('animate-pulse');
+  });
+
+  it('displays in-progress status with animation', () => {
+    render(<StoryStatusBadge status="in-progress" />);
+    const badge = screen.getByTestId('story-status-badge');
+    expect(badge).toHaveClass('animate-pulse');
+  });
 });

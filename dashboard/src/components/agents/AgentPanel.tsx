@@ -1,13 +1,19 @@
+import { useState } from 'react';
 import { useAgentsStore } from '@/stores/agentsStore';
 import { AgentRow } from './AgentRow';
+import { ConfirmKillDialog } from './ConfirmKillDialog';
+import { LogViewerPanel } from '@/components/logs/LogViewerPanel';
 import { toast } from 'sonner';
+import type { Agent } from '@/types/agent';
 
 interface AgentPanelProps {
   projectId?: string;
 }
 
 export function AgentPanel({ projectId }: AgentPanelProps) {
-  const { agents, isLoading } = useAgentsStore();
+  const { agents, isLoading, killingAgentId, killAgent } = useAgentsStore();
+  const [agentToKill, setAgentToKill] = useState<Agent | null>(null);
+  const [logViewerAgentId, setLogViewerAgentId] = useState<string | null>(null);
 
   // Filter by project if specified
   const filteredAgents = projectId
@@ -18,19 +24,45 @@ export function AgentPanel({ projectId }: AgentPanelProps) {
     (a) => a.status === 'running' || a.status === 'stuck'
   );
 
-  const handleKill = (id: string) => {
-    // Placeholder - Epic 4 implements actual kill functionality
-    toast.info('Kill agent coming in Epic 4', {
-      description: `Agent ${id} will be terminated`,
-    });
+  const handleKillRequest = (agent: Agent) => {
+    setAgentToKill(agent);
+  };
+
+  const handleKillConfirm = async () => {
+    if (!agentToKill) return;
+
+    const success = await killAgent(agentToKill.id);
+
+    if (success) {
+      toast.success('Agent terminated', {
+        duration: 5000,
+      });
+    } else {
+      const error = useAgentsStore.getState().error;
+      toast.error(error || 'Failed to kill agent', {
+        duration: Infinity,
+        dismissible: true,
+      });
+    }
+
+    setAgentToKill(null);
+  };
+
+  const handleKillCancel = () => {
+    setAgentToKill(null);
   };
 
   const handleViewLogs = (id: string) => {
-    // Placeholder - Story 4.5 implements log viewer panel
-    toast.info('Log viewer coming in Story 4.5', {
-      description: `Viewing logs for agent ${id}`,
-    });
+    setLogViewerAgentId(id);
   };
+
+  // Get agent title for log viewer
+  const logViewerAgent = logViewerAgentId
+    ? agents.find((a) => a.id === logViewerAgentId)
+    : null;
+  const logViewerTitle = logViewerAgent
+    ? `Logs: ${logViewerAgent.storyId || logViewerAgent.id}`
+    : undefined;
 
   if (isLoading) {
     return (
@@ -68,12 +100,35 @@ export function AgentPanel({ projectId }: AgentPanelProps) {
             <AgentRow
               key={agent.id}
               agent={agent}
-              onKill={handleKill}
+              onKill={() => handleKillRequest(agent)}
               onViewLogs={handleViewLogs}
+              isKilling={killingAgentId === agent.id}
             />
           ))}
         </div>
       )}
+
+      {/* Confirmation Dialog */}
+      <ConfirmKillDialog
+        open={agentToKill !== null}
+        onOpenChange={(open) => {
+          if (!open) handleKillCancel();
+        }}
+        agentId={agentToKill?.id || ''}
+        storyId={agentToKill?.storyId || ''}
+        onConfirm={handleKillConfirm}
+        isKilling={killingAgentId !== null}
+      />
+
+      {/* Log Viewer Panel - Story 4.5 */}
+      <LogViewerPanel
+        open={logViewerAgentId !== null}
+        onOpenChange={(open) => {
+          if (!open) setLogViewerAgentId(null);
+        }}
+        agentId={logViewerAgentId || undefined}
+        title={logViewerTitle}
+      />
     </div>
   );
 }

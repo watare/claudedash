@@ -4,19 +4,21 @@
  */
 
 import { create } from 'zustand';
-import { apiGet } from '../services/api';
+import { apiGet, killAgent as apiKillAgent } from '../services/api';
 import type { Agent } from '../types/agent';
 
 interface AgentsState {
   agents: Agent[];
   isLoading: boolean;
   error: string | null;
+  killingAgentId: string | null;
 
   fetchAgents: () => Promise<void>;
   fetchAgentsByProject: (projectId: string) => Promise<void>;
   updateAgent: (agent: Agent) => void;
   addAgent: (agent: Agent) => void;
   removeAgent: (id: string) => void;
+  killAgent: (agentId: string) => Promise<boolean>;
   clearError: () => void;
 }
 
@@ -24,6 +26,7 @@ export const useAgentsStore = create<AgentsState>((set) => ({
   agents: [],
   isLoading: false,
   error: null,
+  killingAgentId: null,
 
   fetchAgents: async () => {
     try {
@@ -69,6 +72,24 @@ export const useAgentsStore = create<AgentsState>((set) => ({
     set((state) => ({
       agents: state.agents.filter((agent) => agent.id !== id),
     }));
+  },
+
+  killAgent: async (agentId: string) => {
+    set({ killingAgentId: agentId, error: null });
+    try {
+      await apiKillAgent(agentId);
+      set((state) => ({
+        agents: state.agents.filter((a) => a.id !== agentId),
+        killingAgentId: null,
+      }));
+      return true;
+    } catch (error) {
+      set({
+        error: error instanceof Error ? error.message : 'Failed to kill agent',
+        killingAgentId: null,
+      });
+      return false;
+    }
   },
 
   clearError: () => set({ error: null }),

@@ -10,6 +10,7 @@ import type { Agent } from '../types/agent';
 // Mock the api module
 vi.mock('../services/api', () => ({
   apiGet: vi.fn(),
+  killAgent: vi.fn(),
 }));
 
 const mockAgent: Agent = {
@@ -47,6 +48,7 @@ describe('agentsStore', () => {
       agents: [],
       isLoading: false,
       error: null,
+      killingAgentId: null,
     });
   });
 
@@ -243,6 +245,70 @@ describe('agentsStore', () => {
       useAgentsStore.setState({ error: 'Some error' });
 
       useAgentsStore.getState().clearError();
+
+      expect(useAgentsStore.getState().error).toBeNull();
+    });
+  });
+
+  describe('killAgent', () => {
+    it('sets killingAgentId while killing', async () => {
+      useAgentsStore.setState({ agents: mockAgents });
+      vi.mocked(api.killAgent).mockImplementation(() => new Promise(() => {})); // Never resolves
+
+      useAgentsStore.getState().killAgent('agent-123');
+
+      expect(useAgentsStore.getState().killingAgentId).toBe('agent-123');
+    });
+
+    it('removes agent and clears killingAgentId on success', async () => {
+      useAgentsStore.setState({ agents: mockAgents });
+      vi.mocked(api.killAgent).mockResolvedValue({
+        agentId: 'agent-123',
+        status: 'killed',
+        method: 'SIGTERM',
+      });
+
+      const result = await useAgentsStore.getState().killAgent('agent-123');
+
+      expect(result).toBe(true);
+      expect(useAgentsStore.getState().agents).toHaveLength(1);
+      expect(useAgentsStore.getState().agents.find((a) => a.id === 'agent-123')).toBeUndefined();
+      expect(useAgentsStore.getState().killingAgentId).toBeNull();
+      expect(useAgentsStore.getState().error).toBeNull();
+    });
+
+    it('sets error and returns false on failure', async () => {
+      useAgentsStore.setState({ agents: mockAgents });
+      vi.mocked(api.killAgent).mockRejectedValue(new Error('Agent not found'));
+
+      const result = await useAgentsStore.getState().killAgent('agent-123');
+
+      expect(result).toBe(false);
+      expect(useAgentsStore.getState().error).toBe('Agent not found');
+      expect(useAgentsStore.getState().killingAgentId).toBeNull();
+      // Agent should still be in the list on failure
+      expect(useAgentsStore.getState().agents.find((a) => a.id === 'agent-123')).toBeDefined();
+    });
+
+    it('handles non-Error exceptions', async () => {
+      useAgentsStore.setState({ agents: mockAgents });
+      vi.mocked(api.killAgent).mockRejectedValue('Unknown error');
+
+      const result = await useAgentsStore.getState().killAgent('agent-123');
+
+      expect(result).toBe(false);
+      expect(useAgentsStore.getState().error).toBe('Failed to kill agent');
+    });
+
+    it('clears previous error on new kill attempt', async () => {
+      useAgentsStore.setState({ agents: mockAgents, error: 'Previous error' });
+      vi.mocked(api.killAgent).mockResolvedValue({
+        agentId: 'agent-123',
+        status: 'killed',
+        method: 'SIGTERM',
+      });
+
+      await useAgentsStore.getState().killAgent('agent-123');
 
       expect(useAgentsStore.getState().error).toBeNull();
     });

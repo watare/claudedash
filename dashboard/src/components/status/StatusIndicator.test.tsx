@@ -109,6 +109,9 @@ describe('StatusIndicator', () => {
         { status: 'in-progress' as const, label: 'In Progress' },
         { status: 'review' as const, label: 'Review' },
         { status: 'done' as const, label: 'Done' },
+        { status: 'failed' as const, label: 'Failed' },
+        { status: 'killed' as const, label: 'Killed' },
+        { status: 'pending' as const, label: 'Pending' },
       ];
 
       statusLabels.forEach(({ status, label }) => {
@@ -123,6 +126,43 @@ describe('StatusIndicator', () => {
         expect(screen.getByText(label)).toBeInTheDocument();
         unmount();
       });
+    });
+
+    // Story 4.4: New status labels
+    it('shows Failed label for failed status', () => {
+      render(
+        <StatusIndicator
+          storyStatus="failed"
+          verificationStatus="unknown"
+          showLabel
+        />
+      );
+
+      expect(screen.getByText('Failed')).toBeInTheDocument();
+    });
+
+    it('shows Killed label for killed status', () => {
+      render(
+        <StatusIndicator
+          storyStatus="killed"
+          verificationStatus="unknown"
+          showLabel
+        />
+      );
+
+      expect(screen.getByText('Killed')).toBeInTheDocument();
+    });
+
+    it('shows Pending label for pending status', () => {
+      render(
+        <StatusIndicator
+          storyStatus="pending"
+          verificationStatus="unknown"
+          showLabel
+        />
+      );
+
+      expect(screen.getByText('Pending')).toBeInTheDocument();
     });
   });
 

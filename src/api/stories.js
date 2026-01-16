@@ -204,6 +204,15 @@ router.post(
     const { id: storyId } = req.params;
     const { projectPath = process.cwd() } = req.body || {};
 
+    // Validate story ID format (e.g., "4-3" or "4-3-retry-story-api")
+    const storyIdPattern = /^\d+-\d+(-[\w-]+)?$/;
+    if (!storyIdPattern.test(storyId)) {
+      return res.status(400).json({
+        error: 'Invalid story ID format. Expected format: "X-Y" or "X-Y-slug"',
+        code: 'INVALID_STORY_ID',
+      });
+    }
+
     // Load config to get maxStoryRetries setting
     const config = loadConfig(projectPath);
 
@@ -337,6 +346,15 @@ router.get(
   asyncHandler(async (req, res) => {
     const { id: storyId } = req.params;
     const { projectPath = process.cwd() } = req.query;
+
+    // Validate story ID format
+    const storyIdPattern = /^\d+-\d+(-[\w-]+)?$/;
+    if (!storyIdPattern.test(storyId)) {
+      return res.status(400).json({
+        error: 'Invalid story ID format. Expected format: "X-Y" or "X-Y-slug"',
+        code: 'INVALID_STORY_ID',
+      });
+    }
 
     // Load config
     const config = loadConfig(projectPath);

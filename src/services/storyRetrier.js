@@ -17,7 +17,8 @@ import {
   getRetryCount,
   registerStory,
 } from './storyTracker.js';
-import { broadcast } from './websocket.js';
+import { emitStoryRetry, emitAgentSpawn } from './websocket.js';
+import { registerAgent as registerAgentProcess } from './agentRegistry.js';
 import { updateSprintStatus, parseSprintStatus } from '../parser.js';
 
 /**
@@ -92,16 +93,16 @@ export async function retryStory(storyId, options = {}) {
   // Update status to pending
   updateStatus(storyId, 'pending');
 
-  // Broadcast story:retry event
-  broadcast('story:retry', {
+  // Generate agent ID
+  const agentId = `agent-${storyId}-${Date.now()}`;
+
+  // Broadcast story:retry event (AC4)
+  emitStoryRetry({
     storyId,
     status: 'pending',
     retryCount,
-    timestamp: new Date().toISOString(),
+    agentId,
   });
-
-  // Generate agent ID
-  const agentId = `agent-${storyId}-${Date.now()}`;
 
   // Spawn new agent (async, don't await by default)
   if (spawnAgent) {
@@ -151,19 +152,22 @@ async function spawnAgentForStory(storyId, agentId, config) {
   // Update status to in-progress when agent starts
   updateStatus(storyId, 'in-progress');
 
-  // Broadcast agent:spawn event
-  broadcast('agent:spawn', {
-    agentId,
-    storyId,
-    timestamp: new Date().toISOString(),
-  });
-
-  // Build story object for runDevStory
+  // Build story/agent info for tracking
   const story = {
     id: storyId,
     slug: storyId, // Use storyId as slug if not available
     title: `Retry: ${storyId}`,
   };
+
+  // Broadcast agent:spawn event (AC4)
+  // Note: The actual subprocess gets registered in runDevStory via agentRegistry
+  // This agentId is a correlation ID for the retry operation
+  emitAgentSpawn({
+    id: agentId,
+    projectId: config.projectId || config.projectRoot?.split('/').pop() || 'unknown',
+    storyId,
+    storyTitle: story.title,
+  });
 
   // Determine branch name
   const branch = config.branchPrefix

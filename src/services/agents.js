@@ -1,5 +1,7 @@
 /**
  * Agents service - provides agent data from claude-runner state
+ *
+ * Story 4.1: Added killAgentById with audit logging and WebSocket broadcast
  */
 
 import {
@@ -8,6 +10,10 @@ import {
   getAgentById as getAgentByIdFromRunner,
   getAgentsByProject as getAgentsByProjectFromRunner,
 } from '../claude-runner.js';
+import { killAgentProcess } from './agentKiller.js';
+import { getAgent as getAgentFromRegistry } from './agentRegistry.js';
+import { broadcast } from './websocket.js';
+import { insertAgentKillLog } from '../db/agentLogs.js';
 
 /**
  * Truncate output string to specified length
@@ -112,4 +118,79 @@ export async function getAgentById(agentId) {
   const agent = getAgentByIdFromRunner(agentId);
   if (!agent) return null;
   return formatAgentDataWithHistory(agent);
+}
+
+/**
+ * Kill an agent by ID with graceful termination
+ *
+ * Story 4.1: Kill Agent API & Backend
+ *
+ * @param {string} agentId - Agent ID to kill
+ * @param {Object} context - Kill context
+ * @param {string} [context.userId] - User who initiated the kill
+ * @param {string} [context.username] - Username who initiated the kill
+ * @param {string} [context.reason] - Reason for killing
+ * @returns {Promise<Object>} Kill result
+ */
+export async function killAgentById(agentId, context = {}) {
+  // First check if agent exists in runner state
+  const agentData = getAgentByIdFromRunner(agentId);
+
+  if (!agentData) {
+    return {
+      success: false,
+      agentId,
+      error: 'Agent not found',
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  // Check if agent is in the process registry (has a killable process)
+  const registeredAgent = getAgentFromRegistry(agentId);
+
+  if (!registeredAgent) {
+    // Agent exists in runner but not in registry (no process to kill)
+    // This can happen if the process already exited naturally
+    return {
+      success: false,
+      agentId,
+      error: 'Agent not found',
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  // Kill the process
+  const killResult = await killAgentProcess(agentId);
+
+  // Log to audit_log (AC1 requirement)
+  try {
+    await insertAgentKillLog({
+      timestamp: killResult.timestamp,
+      user: context.username || context.userId || 'system',
+      action: 'agent:kill',
+      project: agentData.projectId,
+      details: JSON.stringify({
+        agentId,
+        method: killResult.method,
+        reason: context.reason || 'User requested kill',
+        storyId: agentData.storyId,
+        success: killResult.success,
+      }),
+    });
+  } catch (logError) {
+    console.error('Failed to log agent kill action:', logError.message);
+    // Don't fail the kill operation if logging fails
+  }
+
+  // Broadcast WebSocket event (AC3 requirement)
+  if (killResult.success) {
+    broadcast('agent:kill', {
+      agentId,
+      status: 'killed',
+      method: killResult.method,
+      timestamp: killResult.timestamp,
+    });
+  }
+
+  return killResult;
 }

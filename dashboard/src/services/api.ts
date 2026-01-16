@@ -151,3 +151,66 @@ export async function apiDelete<T>(endpoint: string): Promise<T> {
   const data = await response.json();
   return data.data;
 }
+
+// --- Agent-specific API functions ---
+
+/**
+ * Kill agent response type
+ */
+export interface KillAgentResponse {
+  agentId: string;
+  status: 'killed';
+  method: 'SIGTERM' | 'SIGKILL';
+}
+
+/**
+ * Kill an agent by ID
+ * @param agentId The ID of the agent to kill
+ * @returns Kill response with status and method used
+ */
+export async function killAgent(agentId: string): Promise<KillAgentResponse> {
+  return apiPost<KillAgentResponse>(`/api/agents/${agentId}/kill`);
+}
+
+// --- Story-specific API functions ---
+
+/**
+ * Retry story response type
+ * Story 4.4: AC2, AC3, AC4
+ */
+export interface RetryStoryResponse {
+  storyId: string;
+  status: string;
+  agentId: string;
+}
+
+/**
+ * Retry story full response including meta and optional warning
+ */
+export interface RetryStoryFullResponse {
+  data: RetryStoryResponse;
+  meta: {
+    timestamp: string;
+    retryCount: number;
+  };
+  warning?: string;
+}
+
+/**
+ * Retry a failed or killed story
+ * Story 4.4: AC2 - Retry action success
+ * @param storyId The ID of the story to retry
+ * @returns Retry response with status, agentId, and optional warning
+ */
+export async function retryStory(storyId: string): Promise<RetryStoryFullResponse> {
+  const response = await apiFetch(`/api/stories/${storyId}/retry`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Failed to retry story' }));
+    throw new Error(error.error || 'Failed to retry story');
+  }
+
+  return response.json();
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { setAccessToken, getAccessToken, apiFetch, apiGet, apiPost } from './api';
+import { setAccessToken, getAccessToken, apiFetch, apiGet, apiPost, retryStory } from './api';
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -206,6 +206,80 @@ describe('api service', () => {
           body: undefined,
         })
       );
+    });
+  });
+
+  // Story 4.4: retryStory API function tests
+  describe('retryStory', () => {
+    it('sends POST request to correct endpoint', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          data: { storyId: '4-3', status: 'pending', agentId: 'agent-123' },
+          meta: { timestamp: '2026-01-16T00:00:00Z', retryCount: 1 },
+        }),
+      });
+
+      await retryStory('4-3');
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/stories/4-3/retry',
+        expect.objectContaining({
+          method: 'POST',
+        })
+      );
+    });
+
+    it('returns full response including warning field', async () => {
+      const mockResponse = {
+        data: { storyId: '4-3', status: 'pending', agentId: 'agent-123' },
+        meta: { timestamp: '2026-01-16T00:00:00Z', retryCount: 5 },
+        warning: 'Max retries exceeded (5/3)',
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(mockResponse),
+      });
+
+      const result = await retryStory('4-3');
+
+      expect(result).toEqual(mockResponse);
+      expect(result.warning).toBe('Max retries exceeded (5/3)');
+    });
+
+    it('returns response without warning when not present', async () => {
+      const mockResponse = {
+        data: { storyId: '4-3', status: 'pending', agentId: 'agent-123' },
+        meta: { timestamp: '2026-01-16T00:00:00Z', retryCount: 1 },
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(mockResponse),
+      });
+
+      const result = await retryStory('4-3');
+
+      expect(result.warning).toBeUndefined();
+    });
+
+    it('throws error with message from response on failure', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        json: () => Promise.resolve({ error: 'Story already in progress' }),
+      });
+
+      await expect(retryStory('4-3')).rejects.toThrow('Story already in progress');
+    });
+
+    it('throws default error message when response has no error field', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        json: () => Promise.reject(new Error('Parse error')),
+      });
+
+      await expect(retryStory('4-3')).rejects.toThrow('Failed to retry story');
     });
   });
 });

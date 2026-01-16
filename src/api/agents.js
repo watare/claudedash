@@ -1,9 +1,11 @@
 /**
  * Agents API routes
+ *
+ * Story 4.1: Added POST /api/agents/:id/kill endpoint for terminating agents
  */
 
 import express from 'express';
-import { getAllAgents, getAgentsByProject, getAgentById } from '../services/agents.js';
+import { getAllAgents, getAgentsByProject, getAgentById, killAgentById } from '../services/agents.js';
 import { requireAuth } from '../auth/middleware.js';
 
 const router = express.Router();
@@ -81,6 +83,56 @@ router.get(
       data: agent,
       meta: {
         timestamp: new Date().toISOString(),
+      },
+    });
+  })
+);
+
+/**
+ * POST /api/agents/:id/kill
+ * Kill an agent's subprocess with graceful termination
+ *
+ * Story 4.1: Kill Agent API & Backend
+ *
+ * AC1: Sends SIGTERM, waits 5s, falls back to SIGKILL
+ * AC2: Returns 404 if agent not found
+ * AC3: Broadcasts WebSocket event on success (handled in service)
+ */
+router.post(
+  '/:id/kill',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const { reason } = req.body || {};
+
+    const result = await killAgentById(id, {
+      userId: req.user?.userId,
+      username: req.user?.username,
+      reason: reason || 'User requested kill',
+    });
+
+    if (!result.success && result.error === 'Agent not found') {
+      return res.status(404).json({
+        error: 'Agent not found',
+        code: 'AGENT_NOT_FOUND',
+      });
+    }
+
+    if (!result.success) {
+      return res.status(500).json({
+        error: result.error || 'Failed to kill agent',
+        code: 'KILL_FAILED',
+      });
+    }
+
+    res.json({
+      data: {
+        agentId: result.agentId,
+        status: 'killed',
+        method: result.method,
+      },
+      meta: {
+        timestamp: result.timestamp,
       },
     });
   })

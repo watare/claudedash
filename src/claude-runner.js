@@ -5,8 +5,12 @@ import {
   emitAgentSpawn,
   emitAgentOutput,
   emitAgentComplete,
-  emitAgentKilled,
 } from './services/websocket.js';
+import {
+  registerAgent as registerAgentProcess,
+  removeAgent as removeAgentProcess,
+  updateAgentStatus as updateAgentProcessStatus,
+} from './services/agentRegistry.js';
 
 /**
  * Active agent tracking
@@ -101,9 +105,8 @@ export function killAgent(agentId) {
     agent.status = 'killed';
     agent.killed = true;
     agent.lastActivity = new Date().toISOString();
-
-    // Broadcast agent:killed event via WebSocket
-    emitAgentKilled(agent);
+    // Note: WebSocket broadcast is handled by killAgentById in agents.js
+    // to ensure correct AC3 format: { type: "agent:kill", data: { agentId, status: "killed" } }
   }
 }
 
@@ -205,12 +208,24 @@ export async function runClaude(prompt, options = {}) {
   }
 
   try {
-    const result = await execa(command, args, {
+    // Start the subprocess (don't await yet to get handle for kill functionality)
+    const subprocess = execa(command, args, {
       cwd,
       timeout,
       reject: false,  // Don't throw on non-zero exit
       all: true,      // Combine stdout and stderr
     });
+
+    // Register subprocess with agentRegistry for kill functionality (Story 4.1)
+    if (agentId && subprocess.pid) {
+      registerAgentProcess(agentId, subprocess, {
+        storyId,
+        projectId: projectId || cwd.split('/').pop(),
+      });
+    }
+
+    // Now await the result
+    const result = await subprocess;
 
     const duration = Date.now() - startTime;
 
@@ -228,6 +243,8 @@ export async function runClaude(prompt, options = {}) {
     if (agentId) {
       updateAgentOutput(agentId, output.output.slice(-500));  // Last 500 chars
       completeAgent(agentId, output.success);
+      // Remove from process registry on natural exit (Story 4.1)
+      removeAgentProcess(agentId);
     }
 
     // Write to log file if specified
@@ -254,6 +271,8 @@ ${output.output}
     if (agentId) {
       updateAgentOutput(agentId, `Error: ${error.message}`);
       completeAgent(agentId, false);
+      // Remove from process registry on error (Story 4.1)
+      removeAgentProcess(agentId);
     }
 
     const output = {

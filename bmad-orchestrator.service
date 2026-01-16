@@ -10,7 +10,7 @@ Group=ubuntu
 WorkingDirectory=/home/ubuntu/bmad-orchestrator
 
 # Set the project path as the first argument
-ExecStart=/usr/bin/node /home/ubuntu/bmad-orchestrator/src/server.js /home/ubuntu/gridmv --port 3456
+ExecStart=/home/ubuntu/.nvm/versions/node/v22.19.0/bin/node /home/ubuntu/bmad-orchestrator/src/server.js /home/ubuntu/bmad-orchestrator --port 3456
 
 # Restart policy
 Restart=on-failure
@@ -19,6 +19,7 @@ RestartSec=10
 # Environment
 Environment=NODE_ENV=production
 Environment=PORT=3456
+Environment=JWT_SECRET=0lvDo1cHiKjEFynhYd5y+Z1/KmoA48H1gyB2kMrFzqQ=
 
 # Logging
 StandardOutput=journal

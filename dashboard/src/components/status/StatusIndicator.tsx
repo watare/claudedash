@@ -21,6 +21,9 @@ const statusColors: Record<StoryStatus, string> = {
   'in-progress': 'bg-[#0ECB81]',
   review: 'bg-[#F0B90B]',
   done: 'bg-[#0ECB81]',
+  failed: 'bg-[#F6465D]',
+  killed: 'bg-[#F6465D]',
+  pending: 'bg-[#848E9C]',
 };
 
 const statusLabels: Record<StoryStatus, string> = {
@@ -29,6 +32,9 @@ const statusLabels: Record<StoryStatus, string> = {
   'in-progress': 'In Progress',
   review: 'Review',
   done: 'Done',
+  failed: 'Failed',
+  killed: 'Killed',
+  pending: 'Pending',
 };
 
 /**

@@ -2,19 +2,21 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { AlertTriangle, XCircle } from 'lucide-react';
 import { formatDuration } from '@/utils/formatters';
+import { KillButton } from './KillButton';
 import type { Agent } from '@/types/agent';
 
 interface AgentRowProps {
   agent: Agent;
   onKill: (id: string) => void;
   onViewLogs: (id: string) => void;
+  isKilling?: boolean;
 }
 
 // Configurable thresholds via environment variables (defaults: 30min warn, 45min stuck)
 const WARN_THRESHOLD = parseInt(import.meta.env.VITE_AGENT_WARN_THRESHOLD || '1800', 10); // 30 minutes in seconds
 const STUCK_THRESHOLD = parseInt(import.meta.env.VITE_AGENT_STUCK_THRESHOLD || '2700', 10); // 45 minutes in seconds
 
-export function AgentRow({ agent, onKill, onViewLogs }: AgentRowProps) {
+export function AgentRow({ agent, onKill, onViewLogs, isKilling }: AgentRowProps) {
   const [currentDuration, setCurrentDuration] = useState(agent.duration);
 
   // Update duration every second for running agents
@@ -104,16 +106,15 @@ export function AgentRow({ agent, onKill, onViewLogs }: AgentRowProps) {
         Last: "{truncateOutput(agent.lastOutput)}"
       </p>
 
-      {showActions && (
-        <div className="mt-2 ml-5 flex gap-2">
-          <Button
-            variant="destructive"
-            size="sm"
-            className="h-7 text-xs"
-            onClick={() => onKill(agent.id)}
-          >
-            Kill
-          </Button>
+      {/* Kill button always visible per AC1, View Logs only when warning/stuck */}
+      <div className="mt-2 ml-5 flex gap-2">
+        <KillButton
+          agentId={agent.id}
+          storyId={agent.storyId || 'unknown'}
+          onKillRequest={() => onKill(agent.id)}
+          isKilling={isKilling}
+        />
+        {showActions && (
           <Button
             variant="ghost"
             size="sm"
@@ -122,8 +123,8 @@ export function AgentRow({ agent, onKill, onViewLogs }: AgentRowProps) {
           >
             View Logs
           </Button>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
