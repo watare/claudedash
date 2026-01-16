@@ -1,0 +1,173 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Binance-Inspired Dark Theme for BMAD Orchestrator Dashboard */
+@theme {
+  /* Custom Background Colors */
+  --color-bg-primary: #0B0E11;
+  --color-bg-secondary: #1E2329;
+  --color-bg-tertiary: #2B3139;
+
+  /* Custom Accent Colors */
+  --color-accent-gold: #F0B90B;
+  --color-accent-green: #0ECB81;
+  --color-accent-red: #F6465D;
+  --color-accent-yellow: #FCD535;
+  --color-accent-blue: #1E90FF;
+
+  /* Custom Text Colors */
+  --color-text-primary: #EAECEF;
+  --color-text-secondary: #848E9C;
+
+  /* Custom Border Colors */
+  --color-border-custom: #2B3139;
+  --color-border-hover: #3C4248;
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+/* Binance-Inspired Dark Theme (default) */
+:root {
+  --radius: 0.5rem;
+  /* Primary background: #0B0E11 */
+  --background: #0B0E11;
+  /* Text primary: #EAECEF */
+  --foreground: #EAECEF;
+  /* Card background: #1E2329 */
+  --card: #1E2329;
+  --card-foreground: #EAECEF;
+  --popover: #1E2329;
+  --popover-foreground: #EAECEF;
+  /* Primary accent: Gold #F0B90B */
+  --primary: #F0B90B;
+  --primary-foreground: #0B0E11;
+  /* Secondary: Tertiary background #2B3139 */
+  --secondary: #2B3139;
+  --secondary-foreground: #EAECEF;
+  /* Muted: Tertiary background */
+  --muted: #2B3139;
+  --muted-foreground: #848E9C;
+  /* Accent: Same as secondary */
+  --accent: #2B3139;
+  --accent-foreground: #EAECEF;
+  /* Destructive: Red #F6465D */
+  --destructive: #F6465D;
+  /* Border */
+  --border: #2B3139;
+  --input: #2B3139;
+  /* Ring: Gold accent */
+  --ring: #F0B90B;
+  /* Chart colors */
+  --chart-1: #F0B90B;
+  --chart-2: #0ECB81;
+  --chart-3: #1E90FF;
+  --chart-4: #F6465D;
+  --chart-5: #FCD535;
+  /* Sidebar */
+  --sidebar: #1E2329;
+  --sidebar-foreground: #EAECEF;
+  --sidebar-primary: #F0B90B;
+  --sidebar-primary-foreground: #0B0E11;
+  --sidebar-accent: #2B3139;
+  --sidebar-accent-foreground: #EAECEF;
+  --sidebar-border: #2B3139;
+  --sidebar-ring: #F0B90B;
+}
+
+/* Dark mode is the same (this is a dark-first theme) */
+.dark {
+  --background: #0B0E11;
+  --foreground: #EAECEF;
+  --card: #1E2329;
+  --card-foreground: #EAECEF;
+  --popover: #1E2329;
+  --popover-foreground: #EAECEF;
+  --primary: #F0B90B;
+  --primary-foreground: #0B0E11;
+  --secondary: #2B3139;
+  --secondary-foreground: #EAECEF;
+  --muted: #2B3139;
+  --muted-foreground: #848E9C;
+  --accent: #2B3139;
+  --accent-foreground: #EAECEF;
+  --destructive: #F6465D;
+  --border: #2B3139;
+  --input: #2B3139;
+  --ring: #F0B90B;
+  --chart-1: #F0B90B;
+  --chart-2: #0ECB81;
+  --chart-3: #1E90FF;
+  --chart-4: #F6465D;
+  --chart-5: #FCD535;
+  --sidebar: #1E2329;
+  --sidebar-foreground: #EAECEF;
+  --sidebar-primary: #F0B90B;
+  --sidebar-primary-foreground: #0B0E11;
+  --sidebar-accent: #2B3139;
+  --sidebar-accent-foreground: #EAECEF;
+  --sidebar-border: #2B3139;
+  --sidebar-ring: #F0B90B;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    margin: 0;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+html {
+  color-scheme: dark;
+}
+
+#root {
+  min-height: 100vh;
+}

@@ -9,21 +9,30 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
+    "dev:dashboard": "npm run dev --prefix dashboard",
+    "build:dashboard": "npm run build --prefix dashboard",
     "cli": "node src/cli.js",
     "install:service": "sudo cp bmad-orchestrator.service /etc/systemd/system/ && sudo systemctl daemon-reload",
     "enable:service": "sudo systemctl enable bmad-orchestrator",
     "start:service": "sudo systemctl start bmad-orchestrator",
     "stop:service": "sudo systemctl stop bmad-orchestrator",
     "status:service": "sudo systemctl status bmad-orchestrator",
-    "logs:service": "sudo journalctl -u bmad-orchestrator -f"
+    "logs:service": "sudo journalctl -u bmad-orchestrator -f",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "create-user": "node scripts/create-user.js"
   },
   "dependencies": {
+    "bcrypt": "^6.0.0",
+    "better-sqlite3": "^12.6.0",
     "chalk": "^5.3.0",
     "commander": "^12.0.0",
+    "cookie-parser": "^1.4.7",
     "execa": "^8.0.1",
     "express": "^4.18.2",
     "express-basic-auth": "^1.2.1",
     "js-yaml": "^4.1.0",
+    "jsonwebtoken": "^9.0.3",
     "p-queue": "^8.0.1",
     "ws": "^8.16.0"
   },
@@ -44,5 +53,9 @@
     "claude"
   ],
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "supertest": "^7.2.2",
+    "vitest": "^4.0.17"
+  }
 }

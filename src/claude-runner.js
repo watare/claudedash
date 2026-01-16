@@ -1,10 +1,167 @@
 import { execa } from 'execa';
 import fs from 'fs';
 import path from 'path';
+import {
+  emitAgentSpawn,
+  emitAgentOutput,
+  emitAgentComplete,
+  emitAgentKilled,
+} from './services/websocket.js';
+
+/**
+ * Active agent tracking
+ * Stores information about running Claude processes for API access
+ */
+const activeAgents = new Map();
+let agentIdCounter = 0;
+
+/**
+ * Generate unique agent ID
+ */
+function generateAgentId() {
+  return `agent-${Date.now()}-${++agentIdCounter}`;
+}
+
+/**
+ * Register a new agent when Claude process starts
+ * @param {Object} agentInfo - Agent metadata
+ * @returns {string} Agent ID
+ */
+export function registerAgent(agentInfo) {
+  const id = generateAgentId();
+  const now = new Date().toISOString();
+
+  const agent = {
+    id,
+    projectId: agentInfo.projectId || process.cwd().split('/').pop(),
+    storyId: agentInfo.storyId || null,
+    storyTitle: agentInfo.storyTitle || null,
+    status: 'running',
+    startedAt: now,
+    lastActivity: now,
+    lastOutput: '',
+    outputHistory: [],
+    completed: false,
+    killed: false,
+  };
+
+  activeAgents.set(id, agent);
+
+  // Broadcast agent:spawn event via WebSocket
+  emitAgentSpawn(agent);
+
+  return id;
+}
+
+/**
+ * Update agent activity with new output
+ * @param {string} agentId - Agent ID
+ * @param {string} output - New output text
+ */
+export function updateAgentOutput(agentId, output) {
+  const agent = activeAgents.get(agentId);
+  if (agent) {
+    agent.lastActivity = new Date().toISOString();
+    agent.lastOutput = output;
+    agent.outputHistory.push(output);
+    // Keep only last 100 output entries
+    if (agent.outputHistory.length > 100) {
+      agent.outputHistory.shift();
+    }
+
+    // Broadcast agent:output event via WebSocket
+    emitAgentOutput(agentId, output);
+  }
+}
+
+/**
+ * Mark agent as completed
+ * @param {string} agentId - Agent ID
+ * @param {boolean} success - Whether execution succeeded
+ */
+export function completeAgent(agentId, success = true) {
+  const agent = activeAgents.get(agentId);
+  if (agent) {
+    agent.status = success ? 'completed' : 'failed';
+    agent.completed = true;
+    agent.lastActivity = new Date().toISOString();
+
+    // Broadcast agent:complete event via WebSocket
+    emitAgentComplete(agent, success ? 'success' : 'failed');
+  }
+}
+
+/**
+ * Mark agent as killed
+ * @param {string} agentId - Agent ID
+ */
+export function killAgent(agentId) {
+  const agent = activeAgents.get(agentId);
+  if (agent) {
+    agent.status = 'killed';
+    agent.killed = true;
+    agent.lastActivity = new Date().toISOString();
+
+    // Broadcast agent:killed event via WebSocket
+    emitAgentKilled(agent);
+  }
+}
+
+/**
+ * Get all active agents (not completed or killed)
+ * @returns {Array} Array of active agent objects
+ */
+export function getActiveAgents() {
+  return Array.from(activeAgents.values())
+    .filter(a => !a.completed && !a.killed);
+}
+
+/**
+ * Get all agents including completed/killed
+ * @returns {Array} Array of all agent objects
+ */
+export function getAllAgents() {
+  return Array.from(activeAgents.values());
+}
+
+/**
+ * Get agent by ID
+ * @param {string} agentId - Agent ID
+ * @returns {Object|null} Agent object or null
+ */
+export function getAgentById(agentId) {
+  return activeAgents.get(agentId) || null;
+}
+
+/**
+ * Get agents by project ID
+ * @param {string} projectId - Project ID
+ * @returns {Array} Array of agents for the project
+ */
+export function getAgentsByProject(projectId) {
+  return Array.from(activeAgents.values())
+    .filter(a => a.projectId === projectId && !a.completed && !a.killed);
+}
+
+/**
+ * Clean up old completed agents (older than 1 hour)
+ */
+export function cleanupOldAgents() {
+  const oneHourAgo = Date.now() - 60 * 60 * 1000;
+  for (const [id, agent] of activeAgents.entries()) {
+    if (agent.completed || agent.killed) {
+      const lastActivityTime = new Date(agent.lastActivity).getTime();
+      if (lastActivityTime < oneHourAgo) {
+        activeAgents.delete(id);
+      }
+    }
+  }
+}
 
 /**
  * Run Claude Code CLI with a prompt
  * Returns the result including success/failure and output
+ * Integrates with agent tracking for dashboard visibility
  */
 export async function runClaude(prompt, options = {}) {
   const {
@@ -15,6 +172,11 @@ export async function runClaude(prompt, options = {}) {
     logFile = null,
     allowedTools = null,
     permissionMode = 'bypassPermissions',  // bypassPermissions, default, plan
+    // Agent tracking options
+    projectId = null,
+    storyId = null,
+    storyTitle = null,
+    trackAgent = true,  // Enable agent tracking by default
   } = options;
 
   const args = [
@@ -31,6 +193,16 @@ export async function runClaude(prompt, options = {}) {
   args.push(prompt);
 
   const startTime = Date.now();
+
+  // Register agent for tracking (if enabled)
+  let agentId = null;
+  if (trackAgent) {
+    agentId = registerAgent({
+      projectId: projectId || cwd.split('/').pop(),
+      storyId,
+      storyTitle,
+    });
+  }
 
   try {
     const result = await execa(command, args, {
@@ -49,7 +221,14 @@ export async function runClaude(prompt, options = {}) {
       stderr: result.stderr || '',
       duration,
       command: `${command} ${args.join(' ')}`,
+      agentId,  // Include agent ID in result for reference
     };
+
+    // Update agent with final output and mark complete
+    if (agentId) {
+      updateAgentOutput(agentId, output.output.slice(-500));  // Last 500 chars
+      completeAgent(agentId, output.success);
+    }
 
     // Write to log file if specified
     if (logFile) {
@@ -60,6 +239,7 @@ CWD: ${cwd}
 PROMPT: ${prompt.substring(0, 500)}${prompt.length > 500 ? '...' : ''}
 DURATION: ${duration}ms
 EXIT CODE: ${result.exitCode}
+AGENT ID: ${agentId || 'N/A'}
 ================================================================================
 ${output.output}
 `;
@@ -70,6 +250,12 @@ ${output.output}
   } catch (error) {
     const duration = Date.now() - startTime;
 
+    // Mark agent as failed on error
+    if (agentId) {
+      updateAgentOutput(agentId, `Error: ${error.message}`);
+      completeAgent(agentId, false);
+    }
+
     const output = {
       success: false,
       exitCode: -1,
@@ -77,10 +263,11 @@ ${output.output}
       stderr: error.message,
       duration,
       error: error.message,
+      agentId,
     };
 
     if (logFile) {
-      fs.appendFileSync(logFile, `\nERROR: ${error.message}\n`);
+      fs.appendFileSync(logFile, `\nERROR: ${error.message}\nAGENT ID: ${agentId || 'N/A'}\n`);
     }
 
     return output;
@@ -117,6 +304,10 @@ Do NOT start implementing the story yet - only create the story file.
     model: config.claudeModel,
     timeout: config.claudeTimeout,
     logFile: path.join(config.logPath, `${story.slug}-create.log`),
+    // Agent tracking
+    projectId: config.projectId || config.projectRoot.split('/').pop(),
+    storyId: story.id,
+    storyTitle: `Create: ${story.title}`,
   });
 }
 
@@ -149,7 +340,10 @@ DO NOT create a PR yet - just implement and commit.
     model: config.claudeModel,
     timeout: config.claudeTimeout,
     logFile: path.join(config.logPath, `${story.slug}-dev.log`),
-    
+    // Agent tracking
+    projectId: config.projectId || config.projectRoot.split('/').pop(),
+    storyId: story.id,
+    storyTitle: story.title,
   });
 }
 
@@ -189,7 +383,10 @@ Be thorough but pragmatic. Focus on real problems, not style preferences.
     model: config.claudeModel,
     timeout: config.claudeTimeout,
     logFile: path.join(config.logPath, `${story.slug}-review.log`),
-    
+    // Agent tracking
+    projectId: config.projectId || config.projectRoot.split('/').pop(),
+    storyId: story.id,
+    storyTitle: `Review: ${story.title}`,
   });
 }
 
@@ -223,7 +420,10 @@ Be thorough but don't over-engineer. Fix what's asked, nothing more.
     model: config.claudeModel,
     timeout: config.claudeTimeout,
     logFile: path.join(config.logPath, `${story.slug}-fix.log`),
-    
+    // Agent tracking
+    projectId: config.projectId || config.projectRoot.split('/').pop(),
+    storyId: story.id,
+    storyTitle: `Fix: ${story.title}`,
   });
 }
 
@@ -253,7 +453,10 @@ After creating the PR, output the PR URL.
     model: config.claudeModel,
     timeout: 120000,  // 2 min should be enough for PR
     logFile: path.join(config.logPath, `${story.slug}-pr.log`),
-    
+    // Agent tracking
+    projectId: config.projectId || config.projectRoot.split('/').pop(),
+    storyId: story.id,
+    storyTitle: `PR: ${story.title}`,
   });
 }
 

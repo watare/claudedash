@@ -19,7 +19,15 @@ Thumbs.db
 # Environment
 .env
 .env.local
+.env.production
+
+# Secrets (NEVER commit actual secrets)
+bmad-orchestrator.secrets.yaml
 
 # Build
 dist/
 build/
+
+# Database
+data/orchestrator.db
+data/orchestrator.db-*

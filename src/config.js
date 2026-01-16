@@ -1,6 +1,16 @@
 import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
+import {
+  loadSecrets,
+  getGitHubCredentials,
+  getAllowedUsers,
+  isUserAllowed,
+  getSSHConfig,
+  getPasswordUsers,
+  getNotificationConfig,
+  sanitizeForLogging,
+} from './config/secrets.js';
 
 /**
  * Default configuration
@@ -96,3 +106,15 @@ export function validateConfig(config) {
 
   return errors;
 }
+
+// Re-export secrets functions for convenient access
+export {
+  loadSecrets,
+  getGitHubCredentials,
+  getAllowedUsers,
+  isUserAllowed,
+  getSSHConfig,
+  getPasswordUsers,
+  getNotificationConfig,
+  sanitizeForLogging,
+};

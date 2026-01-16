@@ -1,18 +1,28 @@
 #!/usr/bin/env node
 
 import express from 'express';
-import basicAuth from 'express-basic-auth';
+import cookieParser from 'cookie-parser';
 import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { fileURLToPath } from 'url';
-import { loadConfig, validateConfig } from './config.js';
+import { loadConfig, validateConfig, sanitizeForLogging } from './config.js';
 import { parseEpicsFile, parseSprintStatus, buildExecutionPlan } from './parser.js';
 import { Orchestrator } from './orchestrator.js';
+import { initDb } from './db/index.js';
+import { authRoutes, deleteExpiredSessions } from './auth/index.js';
+import { verifyToken } from './auth/jwt.js';
+import projectsRouter from './api/projects.js';
+import agentsRouter from './api/agents.js';
+import { setAuthenticatedClients, broadcast } from './services/websocket.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// WebSocket close codes for authentication errors
+const WS_CLOSE_AUTH_REQUIRED = 4001;
+const WS_CLOSE_INVALID_TOKEN = 4002;
 
 /**
  * BMAD Orchestrator Dashboard Server
@@ -37,6 +47,9 @@ class DashboardServer {
     this.maxLogs = 2000;
     this.clients = new Set();
 
+    // Authenticated WebSocket clients (userId -> ws)
+    this.authenticatedClients = new Map();
+
     // State
     this.state = {
       status: 'idle', // idle, running, paused, completed, failed, stopped
@@ -58,6 +71,7 @@ class DashboardServer {
     };
 
     this.loadProjectConfig();
+    this.initDatabase();
     this.setupServer();
   }
 
@@ -74,48 +88,124 @@ class DashboardServer {
     }
   }
 
+  initDatabase() {
+    try {
+      initDb();
+      // Start session cleanup on startup and every hour
+      this.startSessionCleanup();
+    } catch (error) {
+      console.error('Failed to initialize database:', error.message);
+      throw error;
+    }
+  }
+
+  startSessionCleanup() {
+    // Run immediately on startup
+    const count = deleteExpiredSessions();
+    if (count > 0) {
+      console.log(`Cleaned up ${count} expired sessions`);
+    }
+    // Run every hour
+    this.sessionCleanupInterval = setInterval(() => {
+      const cleaned = deleteExpiredSessions();
+      if (cleaned > 0) {
+        console.log(`Cleaned up ${cleaned} expired sessions`);
+      }
+    }, 60 * 60 * 1000); // 1 hour
+  }
+
   setupServer() {
     this.app = express();
     this.server = createServer(this.app);
     this.wss = new WebSocketServer({ server: this.server });
 
-    // Authentication middleware
-    const auth = basicAuth({
-      users: { [this.authUser]: this.authPass },
-      challenge: true,
-      realm: 'BMAD Orchestrator',
-    });
-
-    // Apply auth to all routes
-    this.app.use(auth);
+    // Trust reverse proxy (nginx/caddy) for correct protocol detection
+    this.app.set('trust proxy', 1);
 
     // Middleware
     this.app.use(express.json());
-    this.app.use(express.static(path.join(__dirname, '../public')));
+    this.app.use(cookieParser());
+    this.app.use(express.static(path.join(__dirname, '../public/dashboard')));
 
-    // WebSocket handling
+    // Auth routes (mounted at /auth)
+    this.app.use('/auth', authRoutes);
+
+    // API routes
+    this.app.use('/api/projects', projectsRouter);
+    this.app.use('/api/agents', agentsRouter);
+
+    // Initialize authenticated clients for broadcast service
+    setAuthenticatedClients(this.authenticatedClients);
+
+    // WebSocket handling with JWT authentication
     this.wss.on('connection', (ws, req) => {
       const clientIp = req.socket.remoteAddress;
-      this.clients.add(ws);
-      this.addLog(`Client connected: ${clientIp}`);
 
-      // Send current state on connect
-      ws.send(JSON.stringify({ type: 'state', data: this.state }));
-      ws.send(JSON.stringify({ type: 'logs', data: this.logs.slice(-200) }));
-      ws.send(JSON.stringify({ type: 'config', data: this.config }));
+      // Extract token from query string
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      const token = url.searchParams.get('token');
 
-      ws.on('message', (message) => {
-        try {
-          const msg = JSON.parse(message);
-          this.handleWsMessage(ws, msg);
-        } catch (e) {
-          // Ignore invalid messages
+      if (!token) {
+        // No token provided - close with auth error
+        ws.close(WS_CLOSE_AUTH_REQUIRED, 'Authentication required');
+        this.addLog(`WebSocket auth failed: No token (${clientIp})`);
+        return;
+      }
+
+      try {
+        // Verify JWT token
+        const user = verifyToken(token);
+
+        // Check token type - only access tokens allowed
+        if (user.type !== 'access') {
+          ws.close(WS_CLOSE_INVALID_TOKEN, 'Invalid token type');
+          this.addLog(`WebSocket auth failed: Invalid token type (${clientIp})`);
+          return;
         }
-      });
 
-      ws.on('close', () => {
-        this.clients.delete(ws);
-      });
+        // Mark connection as authenticated
+        ws.userId = user.userId;
+        ws.username = user.username;
+        ws.isAuthenticated = true;
+
+        // Track both in legacy clients set and authenticated map
+        this.clients.add(ws);
+        this.authenticatedClients.set(user.userId, ws);
+
+        this.addLog(`Client connected: ${user.username} (${clientIp})`);
+
+        // Send connection acknowledgment
+        ws.send(JSON.stringify({
+          type: 'connection:established',
+          data: { userId: user.userId, username: user.username },
+          timestamp: new Date().toISOString(),
+        }));
+
+        // Send current state on connect
+        ws.send(JSON.stringify({ type: 'state', data: this.state }));
+        ws.send(JSON.stringify({ type: 'logs', data: this.logs.slice(-200) }));
+        ws.send(JSON.stringify({ type: 'config', data: sanitizeForLogging(this.config) }));
+
+        ws.on('message', (message) => {
+          try {
+            const msg = JSON.parse(message);
+            this.handleWsMessage(ws, msg);
+          } catch (e) {
+            // Ignore invalid messages
+          }
+        });
+
+        ws.on('close', () => {
+          this.clients.delete(ws);
+          if (ws.userId) {
+            this.authenticatedClients.delete(ws.userId);
+          }
+        });
+      } catch (error) {
+        // Token verification failed
+        ws.close(WS_CLOSE_INVALID_TOKEN, 'Invalid token');
+        this.addLog(`WebSocket auth failed: Invalid token (${clientIp})`);
+      }
     });
 
     // REST API routes
@@ -212,24 +302,24 @@ class DashboardServer {
       res.json({ paused: this.isPaused, status: this.state.status });
     });
 
-    // Get config
+    // Get config (sanitized to prevent secret exposure)
     this.app.get('/api/config', (req, res) => {
-      res.json(this.config);
+      res.json(sanitizeForLogging(this.config));
     });
 
     // Update config
     this.app.patch('/api/config', (req, res) => {
       const updates = req.body;
       Object.assign(this.config, updates);
-      this.broadcast({ type: 'config', data: this.config });
-      res.json(this.config);
+      this.broadcast({ type: 'config', data: sanitizeForLogging(this.config) });
+      res.json(sanitizeForLogging(this.config));
     });
 
     // Reload config from file
     this.app.post('/api/config/reload', (req, res) => {
       this.loadProjectConfig();
-      this.broadcast({ type: 'config', data: this.config });
-      res.json(this.config);
+      this.broadcast({ type: 'config', data: sanitizeForLogging(this.config) });
+      res.json(sanitizeForLogging(this.config));
     });
 
     // Clear logs
@@ -241,7 +331,7 @@ class DashboardServer {
 
     // Serve dashboard (catch-all)
     this.app.get('*', (req, res) => {
-      res.sendFile(path.join(__dirname, '../public/index.html'));
+      res.sendFile(path.join(__dirname, '../public/dashboard/index.html'));
     });
   }
 
