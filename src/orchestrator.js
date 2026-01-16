@@ -3,6 +3,129 @@ import path from 'path';
 import { loadConfig, validateConfig } from './config.js';
 import { parseEpicsFile, parseSprintStatus, buildExecutionPlan } from './parser.js';
 import { runEpicsParallel } from './epic-worker.js';
+import { emitProjectPaused, emitProjectResumed } from './services/websocket.js';
+
+// ============================================================================
+// Story 3.4: Project Pause State Management
+// ============================================================================
+
+/**
+ * @typedef {Object} ProjectState
+ * @property {'running'|'paused'} status - Current project status
+ * @property {string} [pausedAt] - ISO timestamp when paused
+ * @property {string} [resumedAt] - ISO timestamp when resumed
+ * @property {string} [reason] - Reason for pause
+ * @property {'verification_system'|'user'} [pausedBy] - Who initiated the pause
+ */
+
+/**
+ * In-memory storage for project states
+ * @type {Map<string, ProjectState>}
+ */
+const projectStates = new Map();
+
+/**
+ * Pause project orchestration
+ * @param {string} projectId - Project identifier
+ * @param {string} reason - Reason for pausing
+ * @returns {boolean} - True if paused, false if already paused
+ */
+export function pauseProject(projectId, reason) {
+  const existingState = projectStates.get(projectId);
+  if (existingState?.status === 'paused') {
+    console.log(`[ORCHESTRATOR] Project ${projectId} is already paused`);
+    return false;
+  }
+
+  const pausedAt = new Date().toISOString();
+
+  projectStates.set(projectId, {
+    status: 'paused',
+    pausedAt,
+    reason,
+    pausedBy: 'verification_system'
+  });
+
+  // Emit WebSocket event
+  emitProjectPaused({
+    projectId,
+    reason,
+    pausedAt
+  });
+
+  console.log(`[ORCHESTRATOR] Project ${projectId} paused: ${reason}`);
+  return true;
+}
+
+/**
+ * Resume paused project
+ * @param {string} projectId - Project identifier
+ * @returns {boolean} - True if resumed, false if wasn't paused
+ */
+export function resumeProject(projectId) {
+  const state = projectStates.get(projectId);
+  if (state?.status !== 'paused') {
+    console.log(`[ORCHESTRATOR] Project ${projectId} is not paused`);
+    return false;
+  }
+
+  const resumedAt = new Date().toISOString();
+
+  projectStates.set(projectId, {
+    status: 'running',
+    resumedAt
+  });
+
+  // Emit WebSocket event
+  emitProjectResumed({
+    projectId,
+    resumedAt
+  });
+
+  console.log(`[ORCHESTRATOR] Project ${projectId} resumed`);
+  return true;
+}
+
+/**
+ * Check if project is paused
+ * @param {string} projectId - Project identifier
+ * @returns {boolean}
+ */
+export function isProjectPaused(projectId) {
+  return projectStates.get(projectId)?.status === 'paused';
+}
+
+/**
+ * Get project state
+ * @param {string} projectId - Project identifier
+ * @returns {ProjectState|undefined}
+ */
+export function getProjectState(projectId) {
+  return projectStates.get(projectId);
+}
+
+/**
+ * Get all project states
+ * @returns {Map<string, ProjectState>}
+ */
+export function getAllProjectStates() {
+  return new Map(projectStates);
+}
+
+/**
+ * Clear project state (useful for testing)
+ * @param {string} projectId - Project identifier
+ */
+export function clearProjectState(projectId) {
+  projectStates.delete(projectId);
+}
+
+/**
+ * Clear all project states (useful for testing)
+ */
+export function clearAllProjectStates() {
+  projectStates.clear();
+}
 
 /**
  * Main BMAD Orchestrator

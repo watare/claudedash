@@ -57,6 +57,146 @@ export function closeDb() {
   }
 }
 
+// ============================================================================
+// Story 3.5: Verification Audit Log Functions
+// ============================================================================
+
+/**
+ * @typedef {Object} AuditLogEntry
+ * @property {string} timestamp - ISO 8601 timestamp
+ * @property {string} storyId - Story identifier
+ * @property {string} [projectId] - Project identifier
+ * @property {string} claimedStatus - Status claimed by agent
+ * @property {string} actualStatus - Actual status from YAML
+ * @property {'match'|'mismatch'|'error'} result - Verification result
+ * @property {string} [actionTaken] - Action taken after verification
+ * @property {number} [durationMs] - Duration in milliseconds
+ * @property {number} [attemptCount] - Number of attempts
+ * @property {string} [details] - Additional JSON details
+ */
+
+/**
+ * @typedef {Object} AuditLogFilters
+ * @property {string} [project] - Filter by project ID
+ * @property {string} [story] - Filter by story ID (partial match)
+ * @property {string} [dateFrom] - Start date (ISO 8601)
+ * @property {string} [dateTo] - End date (ISO 8601)
+ * @property {string} [result] - Filter by result type
+ * @property {number} [limit] - Max results (default 20, max 100)
+ * @property {number} [offset] - Pagination offset
+ */
+
+/**
+ * @typedef {Object} AuditLogQueryResult
+ * @property {AuditLogEntry[]} rows - Matching audit log entries
+ * @property {number} total - Total count matching filters
+ */
+
+/**
+ * Insert a verification audit log entry
+ * @param {AuditLogEntry} entry - The audit log entry
+ * @returns {number} - Inserted row ID
+ */
+export function insertAuditLog(entry) {
+  const database = getDb();
+
+  const stmt = database.prepare(`
+    INSERT INTO verification_audit_logs
+    (timestamp, story_id, project_id, claimed_status, actual_status, result, action_taken, duration_ms, attempt_count, details)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const result = stmt.run(
+    entry.timestamp,
+    entry.storyId,
+    entry.projectId || null,
+    entry.claimedStatus,
+    entry.actualStatus,
+    entry.result,
+    entry.actionTaken || null,
+    entry.durationMs || null,
+    entry.attemptCount || 1,
+    entry.details || null
+  );
+
+  return result.lastInsertRowid;
+}
+
+/**
+ * Query audit logs with filters
+ * @param {AuditLogFilters} filters - Query filters
+ * @returns {AuditLogQueryResult} - Query results with total count
+ */
+export function queryAuditLogs(filters = {}) {
+  const database = getDb();
+
+  // Build WHERE clause dynamically
+  const conditions = [];
+  const params = [];
+
+  if (filters.project) {
+    conditions.push('project_id = ?');
+    params.push(filters.project);
+  }
+
+  if (filters.story) {
+    conditions.push('story_id LIKE ?');
+    params.push(`%${filters.story}%`);
+  }
+
+  if (filters.dateFrom) {
+    conditions.push('timestamp >= ?');
+    params.push(filters.dateFrom);
+  }
+
+  if (filters.dateTo) {
+    conditions.push('timestamp <= ?');
+    params.push(filters.dateTo);
+  }
+
+  if (filters.result) {
+    conditions.push('result = ?');
+    params.push(filters.result);
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  // Get total count
+  const countStmt = database.prepare(`
+    SELECT COUNT(*) as total FROM verification_audit_logs ${whereClause}
+  `);
+  const countResult = countStmt.get(...params);
+  const total = countResult.total;
+
+  // Get paginated results
+  const limit = Math.min(Math.max(filters.limit || 20, 1), 100);
+  const offset = Math.max(filters.offset || 0, 0);
+
+  const dataStmt = database.prepare(`
+    SELECT
+      id,
+      timestamp,
+      story_id as storyId,
+      project_id as projectId,
+      claimed_status as claimedStatus,
+      actual_status as actualStatus,
+      result,
+      action_taken as actionTaken,
+      duration_ms as durationMs,
+      attempt_count as attemptCount,
+      details,
+      created_at as createdAt
+    FROM verification_audit_logs
+    ${whereClause}
+    ORDER BY timestamp DESC
+    LIMIT ? OFFSET ?
+  `);
+
+  const rows = dataStmt.all(...params, limit, offset);
+
+  return { rows, total };
+}
+
 // Graceful shutdown handlers
 process.on('exit', closeDb);
 process.on('SIGINT', () => {

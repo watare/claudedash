@@ -16,6 +16,8 @@ import { authRoutes, deleteExpiredSessions } from './auth/index.js';
 import { verifyToken } from './auth/jwt.js';
 import projectsRouter from './api/projects.js';
 import agentsRouter from './api/agents.js';
+import auditLogsRouter from './api/logs.js';
+import storiesRouter from './api/stories.js';
 import { setAuthenticatedClients, broadcast } from './services/websocket.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -133,6 +135,8 @@ class DashboardServer {
     // API routes
     this.app.use('/api/projects', projectsRouter);
     this.app.use('/api/agents', agentsRouter);
+    this.app.use('/api/audit-logs', auditLogsRouter);
+    this.app.use('/api/stories', storiesRouter);
 
     // Initialize authenticated clients for broadcast service
     setAuthenticatedClients(this.authenticatedClients);

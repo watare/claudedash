@@ -2,4 +2,4 @@
  * Database module exports
  */
 
-export { getDb, initDb, closeDb } from './sqlite.js';
+export { getDb, initDb, closeDb, insertAuditLog, queryAuditLogs } from './sqlite.js';

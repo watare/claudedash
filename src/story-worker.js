@@ -12,6 +12,9 @@ import {
   isSuccessfulCompletion,
 } from './claude-runner.js';
 import { updateSprintStatus } from './parser.js';
+import { verifyBeforeProceeding } from './services/verification.js';
+import { pauseProject, isProjectPaused } from './orchestrator.js';
+import { emitStoryVerificationFailed, emitStoryVerified } from './services/websocket.js';
 
 /**
  * Story Worker
@@ -47,6 +50,16 @@ export class StoryWorker {
     this.log(`Starting story ${this.story.id}: ${this.story.title}`);
 
     try {
+      // Check if project is paused before starting
+      const projectId = this.config.projectId || this.config.projectRoot;
+      if (isProjectPaused(projectId)) {
+        this.log(`  [${this.story.id}] Project is paused, skipping story`);
+        this.result.status = 'skipped';
+        this.result.error = 'Project is paused';
+        this.result.endTime = new Date().toISOString();
+        return this.result;
+      }
+
       // Note: Story file creation is handled by EpicWorker.createAllStories()
       // Stories should already be 'ready-for-dev' when we get here
 
@@ -59,7 +72,23 @@ export class StoryWorker {
       // Step 3: Review loop
       await this.step('review-loop', () => this.reviewLoop());
 
-      // Step 4: Create PR
+      // Step 4: Verify story completion status (Story 3.4: Verification Gate)
+      // Note: We verify 'review' status here because reviewLoop() sets status to 'review'
+      // when code review passes. The 'done' status is set later after PR merge.
+      const verificationResult = await this.step('verify-completion', () =>
+        this.verifyStoryCompletion('review')
+      );
+
+      // If verification failed, don't proceed to PR
+      if (!verificationResult.verified) {
+        this.result.status = 'verification_failed';
+        this.result.error = verificationResult.reason;
+        this.log(`Failed story ${this.story.id}: ${verificationResult.reason}`);
+        this.result.endTime = new Date().toISOString();
+        return this.result;
+      }
+
+      // Step 5: Create PR (only if verification passed)
       await this.step('create-pr', () => this.createPR());
 
       this.result.status = 'completed';
@@ -242,21 +271,118 @@ export class StoryWorker {
 
     return result;
   }
+
+  // ===========================================================================
+  // Story 3.4: Verification Gate Integration
+  // ===========================================================================
+
+  /**
+   * Verify story completion status before proceeding to next story
+   * @param {string} claimedStatus - Status the story claims (usually 'done' or 'review')
+   * @returns {Promise<{ verified: boolean, reason?: string }>}
+   */
+  async verifyStoryCompletion(claimedStatus = 'review') {
+    this.log(`  [${this.story.id}] Verifying story completion...`);
+
+    try {
+      const verification = await verifyBeforeProceeding(
+        this.story.slug,
+        claimedStatus,
+        this.config.projectRoot,
+        {
+          maxRetries: this.config.verificationMaxRetries || 3,
+          retryDelayMs: this.config.verificationRetryDelayMs || 5000,
+        }
+      );
+
+      if (verification.proceed) {
+        // Emit success event
+        emitStoryVerified({
+          projectId: this.config.projectId || this.config.projectRoot,
+          storyId: this.story.slug,
+          claimed: claimedStatus,
+          actual: verification.result.actual || verification.result.finalStatus,
+          match: true
+        });
+
+        this.log(`  [${this.story.id}] Verification passed, proceeding`);
+        return { verified: true };
+      }
+
+      // Verification failed - emit failure event and pause project
+      const result = verification.result;
+      const projectId = this.config.projectId || this.config.projectRoot;
+
+      emitStoryVerificationFailed({
+        storyKey: this.story.slug,
+        attempts: result.attempts,
+        claimed: claimedStatus,
+        actual: result.finalStatus,
+        projectId
+      });
+
+      // Pause the project
+      pauseProject(projectId, `Verification failed for ${this.story.slug}: claimed ${claimedStatus}, actual ${result.finalStatus}`);
+
+      // Update sprint status to verification_failed
+      updateSprintStatus(this.config.sprintStatusPath, {
+        [this.story.slug]: 'verification_failed',
+      });
+
+      this.log(`  [${this.story.id}] Verification FAILED after ${result.attempts} attempts`);
+      return {
+        verified: false,
+        reason: `Verification failed: claimed ${claimedStatus}, actual ${result.finalStatus}`
+      };
+
+    } catch (error) {
+      this.log(`  [${this.story.id}] Verification error: ${error.message}`);
+      return {
+        verified: false,
+        reason: `Verification error: ${error.message}`
+      };
+    }
+  }
 }
 
 /**
  * Run multiple stories in parallel with concurrency limit
+ * Story 3.4: Now includes verification gate and pause state checking
+ *
+ * Note: When a project is paused, queued stories are not cancelled but will be
+ * skipped when they start (checked via isProjectPaused). This is intentional to
+ * maintain queue integrity and allow for potential resume scenarios.
  */
 export async function runStoriesParallel(stories, config, logger, concurrency = 4) {
   const { default: PQueue } = await import('p-queue');
   const queue = new PQueue({ concurrency });
   const results = [];
+  const projectId = config.projectId || config.projectRoot;
 
   for (const story of stories) {
     queue.add(async () => {
+      // Check if project is paused before starting each story
+      if (isProjectPaused(projectId)) {
+        logger(`  [${story.id}] Skipping story - project is paused`);
+        const skippedResult = {
+          story: story.id,
+          slug: story.slug,
+          title: story.title,
+          status: 'skipped',
+          error: 'Project is paused',
+          startTime: new Date().toISOString(),
+          endTime: new Date().toISOString(),
+        };
+        results.push(skippedResult);
+        return skippedResult;
+      }
+
       const worker = new StoryWorker(story, config, logger);
       const result = await worker.run();
       results.push(result);
+
+      // If this story's verification failed, the project will be paused
+      // Subsequent stories in the queue will be skipped
       return result;
     });
   }

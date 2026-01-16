@@ -182,3 +182,61 @@ export function emitStoryVerified(result) {
 export function emitStoryMismatch(result) {
   broadcast('story:mismatch', result);
 }
+
+// ============================================================================
+// Story 3.4: Verification Blocking WebSocket Events
+// ============================================================================
+
+/**
+ * Emit story:verification_failed event when verification fails after max retries
+ * @param {{ storyKey: string, attempts: number, claimed: string, actual: string, projectId: string }} data
+ */
+export function emitStoryVerificationFailed(data) {
+  broadcast('story:verification_failed', {
+    storyKey: data.storyKey,
+    attempts: data.attempts,
+    claimed: data.claimed,
+    actual: data.actual,
+    projectId: data.projectId,
+  });
+}
+
+/**
+ * Emit project:paused event when project orchestration is paused
+ * @param {{ projectId: string, reason: string, pausedAt: string }} data
+ */
+export function emitProjectPaused(data) {
+  broadcast('project:paused', {
+    projectId: data.projectId,
+    reason: data.reason,
+    pausedAt: data.pausedAt,
+  });
+}
+
+/**
+ * Emit project:resumed event when project orchestration resumes
+ * @param {{ projectId: string, resumedAt: string }} data
+ */
+export function emitProjectResumed(data) {
+  broadcast('project:resumed', {
+    projectId: data.projectId,
+    resumedAt: data.resumedAt,
+  });
+}
+
+// ============================================================================
+// Story 4.3: Story Retry WebSocket Events
+// ============================================================================
+
+/**
+ * Emit story:retry event when a story retry is initiated
+ * @param {{ storyId: string, status: string, retryCount: number, agentId?: string }} data
+ */
+export function emitStoryRetry(data) {
+  broadcast('story:retry', {
+    storyId: data.storyId,
+    status: data.status,
+    retryCount: data.retryCount,
+    agentId: data.agentId,
+  });
+}
