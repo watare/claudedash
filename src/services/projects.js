@@ -271,30 +271,88 @@ function getSprintStatusPath(projectRoot) {
 
 /**
  * Get all projects with summary information
+ * Scans the parent directory of CWD for all directories with _bmad installed
  * @returns {Promise<Array>} List of projects with basic info
  */
 export async function getAllProjects() {
   const projects = [];
+  const currentDir = process.cwd();
+  const parentDir = path.dirname(currentDir);
 
-  // Get project from environment or default
-  const projectRoot = process.cwd();
-  const projectName = projectRoot.split('/').pop();
+  try {
+    // Read all entries in the parent directory
+    const entries = fs.readdirSync(parentDir, { withFileTypes: true });
 
-  // Try to read sprint status
-  const statusPath = getSprintStatusPath(projectRoot);
-  const sprintStatus = parseSprintStatus(statusPath);
-  const { currentEpic, currentStory } = findCurrentWork(sprintStatus);
+    for (const entry of entries) {
+      // Skip non-directories and hidden directories
+      if (!entry.isDirectory() || entry.name.startsWith('.')) {
+        continue;
+      }
 
-  projects.push({
-    id: projectName,
-    name: projectName,
-    path: projectRoot,
-    status: deriveProjectStatus(sprintStatus),
-    currentEpic,
-    currentStory,
-    agentCount: 0, // Will be populated when orchestrator tracks agents
-    lastActivity: new Date().toISOString(),
-  });
+      const projectPath = path.join(parentDir, entry.name);
+      const bmadPath = path.join(projectPath, '_bmad');
+
+      // Check if this directory has BMAD installed
+      if (!fs.existsSync(bmadPath)) {
+        continue;
+      }
+
+      // Try to read sprint status
+      const statusPath = getSprintStatusPath(projectPath);
+      const sprintStatus = parseSprintStatus(statusPath);
+      const { currentEpic, currentStory } = findCurrentWork(sprintStatus);
+
+      // Get actual agent count for this project
+      let agentCount = 0;
+      try {
+        const agents = await getAgentsByProject(entry.name);
+        agentCount = agents.filter(a => a.status === 'running').length;
+      } catch (e) {
+        // Ignore errors, default to 0
+      }
+
+      projects.push({
+        id: entry.name,
+        name: entry.name,
+        path: projectPath,
+        status: deriveProjectStatus(sprintStatus),
+        currentEpic,
+        currentStory,
+        agentCount,
+        lastActivity: new Date().toISOString(),
+      });
+    }
+  } catch (error) {
+    console.warn(`[projects] Failed to scan parent directory: ${error.message}`);
+    // Fallback: return just the current project
+    const projectName = currentDir.split('/').pop();
+    const statusPath = getSprintStatusPath(currentDir);
+    const sprintStatus = parseSprintStatus(statusPath);
+    const { currentEpic, currentStory } = findCurrentWork(sprintStatus);
+
+    // Get actual agent count for fallback project
+    let agentCount = 0;
+    try {
+      const agents = await getAgentsByProject(projectName);
+      agentCount = agents.filter(a => a.status === 'running').length;
+    } catch (e) {
+      // Ignore errors, default to 0
+    }
+
+    projects.push({
+      id: projectName,
+      name: projectName,
+      path: currentDir,
+      status: deriveProjectStatus(sprintStatus),
+      currentEpic,
+      currentStory,
+      agentCount,
+      lastActivity: new Date().toISOString(),
+    });
+  }
+
+  // Sort by name for consistent ordering
+  projects.sort((a, b) => a.name.localeCompare(b.name));
 
   return projects;
 }

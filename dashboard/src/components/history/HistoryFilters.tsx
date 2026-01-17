@@ -19,6 +19,10 @@ const statusOptions: { value: ExecutionStatus | ''; label: string }[] = [
 export function HistoryFilters() {
   const { filters, setFilters } = useHistoryStore();
 
+  const handleProjectChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFilters({ project: e.target.value || null });
+  };
+
   const handleStatusChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value as ExecutionStatus | '';
     setFilters({ status: value || null });
@@ -45,6 +49,18 @@ export function HistoryFilters() {
 
   return (
     <div className="flex flex-wrap items-center gap-3 p-4 bg-[#1E2329] rounded-lg border border-[#2B3139]">
+      {/* Project filter */}
+      <div className="flex flex-col gap-1">
+        <label className="text-xs text-[#848E9C]">Project</label>
+        <input
+          type="text"
+          value={filters.project || ''}
+          onChange={handleProjectChange}
+          placeholder="Filter by project..."
+          className="bg-[#0B0E11] text-[#EAECEF] border border-[#2B3139] rounded px-3 py-1.5 text-sm focus:outline-none focus:border-amber-500 w-40"
+        />
+      </div>
+
       {/* Status filter */}
       <div className="flex flex-col gap-1">
         <label className="text-xs text-[#848E9C]">Status</label>

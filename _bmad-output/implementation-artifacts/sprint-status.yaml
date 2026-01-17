@@ -71,14 +71,14 @@ development_status:
   epic-3-retrospective: optional
 
   # Epic 4: Agent Control & Recovery
-  epic-4: in-progress
+  epic-4: done
   4-1-kill-agent-api-backend: done
   4-2-kill-agent-dashboard-button: done
   4-3-retry-story-api-backend: done
   4-4-retry-story-dashboard-button: done
   4-5-log-viewer-panel: done
   4-6-stuck-agent-detection-alerts: done
-  4-7-execution-history-view: in-progress
+  4-7-execution-history-view: done
   epic-4-retrospective: optional
 
   # Epic 5: Notifications & Alerts

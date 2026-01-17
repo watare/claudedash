@@ -17,11 +17,20 @@ import { logAction } from './auth/audit.js';
 import { verifyToken } from './auth/jwt.js';
 import projectsRouter from './api/projects.js';
 import agentsRouter from './api/agents.js';
+import { getAllProjects } from './services/projects.js';
 import auditLogsRouter from './api/logs.js';
 import storiesRouter from './api/stories.js';
 import historyRouter from './api/history.js';
 import { setAuthenticatedClients, broadcast } from './services/websocket.js';
 import { startStuckDetection, stopStuckDetection } from './services/stuckDetector.js';
+import {
+  startRun,
+  recordEvent,
+  endRun,
+  updateStoriesTotalForCurrentRun,
+  incrementCompletedStories,
+  incrementFailedStories,
+} from './services/historyRecorder.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -52,12 +61,17 @@ class DashboardServer {
     this.maxLogs = 2000;
     this.clients = new Set();
 
+    // Multi-project orchestration state
+    this.activeProjectPath = null;
+    this.activeProjectConfig = null;
+
     // Authenticated WebSocket clients (userId -> ws)
     this.authenticatedClients = new Map();
 
     // State
     this.state = {
       status: 'idle', // idle, running, paused, completed, failed, stopped
+      activeProject: null, // { id, path, name } - currently orchestrated project
       projectRoot: this.projectRoot,
       currentBatch: null,
       epics: [],
@@ -90,6 +104,26 @@ class DashboardServer {
     } catch (error) {
       console.error('Failed to load config:', error.message);
       this.config = { projectRoot: this.projectRoot };
+    }
+  }
+
+  /**
+   * Load configuration for a specific project path
+   * @param {string} projectPath - Absolute path to the project
+   * @returns {Object} Project configuration
+   * @throws {Error} If config cannot be loaded
+   */
+  loadConfigForProject(projectPath) {
+    try {
+      const config = loadConfig(projectPath);
+      const errors = validateConfig(config);
+      if (errors.length > 0) {
+        console.warn(`Config warnings for ${projectPath}:`, errors);
+      }
+      return config;
+    } catch (error) {
+      console.error(`Failed to load config for ${projectPath}:`, error.message);
+      throw error;
     }
   }
 
@@ -293,11 +327,20 @@ class DashboardServer {
       });
     });
 
-    // Start orchestration
+    // Start orchestration (backward compatibility - uses server's default project)
     this.app.post('/api/start', async (req, res) => {
       if (this.isRunning) {
         return res.status(400).json({ error: 'Already running' });
       }
+
+      // Set active project to server's default project for backward compatibility
+      this.activeProjectPath = this.projectRoot;
+      this.activeProjectConfig = this.config;
+      this.state.activeProject = {
+        id: this.projectRoot.split('/').pop(),
+        path: this.projectRoot,
+        name: this.projectRoot.split('/').pop()
+      };
 
       const options = req.body || {};
       this.addLog(`Start requested with options: ${JSON.stringify(options)}`);
@@ -318,6 +361,14 @@ class DashboardServer {
       this.state.endTime = new Date().toISOString();
       this.broadcast({ type: 'state', data: this.state });
       this.addLog('Orchestration stopped by user');
+
+      // Story 4.7: End history recording with stopped status
+      endRun('stopped', {
+        completed: this.state.progress.completedStories,
+        failed: this.state.progress.failedStories,
+        total: this.state.progress.totalStories,
+      });
+      this.currentRunId = null;
 
       res.json({ message: 'Stopped', status: 'stopped' });
     });
@@ -364,25 +415,43 @@ class DashboardServer {
     });
 
     // Start orchestration for a specific project
-    // Story: Workflow Launch Button - Per-project orchestration trigger
+    // Story: Workflow Launch Button - Per-project orchestration trigger (multi-project enabled)
     this.app.post('/api/projects/:id/start', requireAuth, async (req, res) => {
       const { id } = req.params;
-
-      // Validate project exists (currently single-project, just verify ID matches)
-      const projectName = this.projectRoot.split('/').pop();
-      if (id !== projectName) {
-        return res.status(404).json({
-          error: 'Project not found',
-          code: 'PROJECT_NOT_FOUND',
-          details: { requestedId: id, availableProjects: [projectName] },
-        });
-      }
 
       if (this.isRunning) {
         return res.status(400).json({
           error: 'Orchestration already running',
           code: 'ALREADY_RUNNING',
-          details: { currentStatus: this.state?.status || 'running' },
+          details: {
+            currentStatus: this.state?.status,
+            activeProject: this.state.activeProject?.id
+          },
+        });
+      }
+
+      // Find the project by ID from discovered projects
+      const projects = await getAllProjects();
+      const project = projects.find(p => p.id === id);
+
+      if (!project) {
+        return res.status(404).json({
+          error: 'Project not found',
+          code: 'PROJECT_NOT_FOUND',
+          details: { requestedId: id, availableProjects: projects.map(p => p.id) },
+        });
+      }
+
+      // Load config for target project
+      try {
+        this.activeProjectConfig = this.loadConfigForProject(project.path);
+        this.activeProjectPath = project.path;
+        this.state.activeProject = { id: project.id, path: project.path, name: project.name };
+      } catch (error) {
+        return res.status(400).json({
+          error: 'Project configuration invalid',
+          code: 'INVALID_PROJECT_CONFIG',
+          details: { projectId: id, error: error.message },
         });
       }
 
@@ -398,13 +467,14 @@ class DashboardServer {
 
       // Audit log the action
       const username = req.user?.username || req.user?.email || 'unknown';
-      logAction(username, 'project:start', id, { options });
+      logAction(username, 'project:start', id, { options, projectPath: project.path });
 
-      this.addLog(`Start requested for project ${id} by ${username}`);
+      this.addLog(`Start requested for project ${id} (${project.path}) by ${username}`);
 
       res.json({
         data: {
           projectId: id,
+          projectPath: project.path,
           status: 'starting',
         },
         meta: {
@@ -416,16 +486,16 @@ class DashboardServer {
       setImmediate(() => this.startOrchestration(options));
     });
 
-    // Stop orchestration for a specific project
+    // Stop orchestration for a specific project (multi-project enabled)
     this.app.post('/api/projects/:id/stop', requireAuth, (req, res) => {
       const { id } = req.params;
 
-      const projectName = this.projectRoot.split('/').pop();
-      if (id !== projectName) {
-        return res.status(404).json({
-          error: 'Project not found',
-          code: 'PROJECT_NOT_FOUND',
-          details: { requestedId: id, availableProjects: [projectName] },
+      // Validate against active project
+      if (!this.state.activeProject || this.state.activeProject.id !== id) {
+        return res.status(400).json({
+          error: 'Project not being orchestrated',
+          code: 'NOT_ACTIVE_PROJECT',
+          details: { requestedId: id, activeProject: this.state.activeProject?.id },
         });
       }
 
@@ -444,8 +514,22 @@ class DashboardServer {
       this.isRunning = false;
       this.state.status = 'stopped';
       this.state.endTime = new Date().toISOString();
+
+      // Clear active project state
+      this.activeProjectPath = null;
+      this.activeProjectConfig = null;
+      this.state.activeProject = null;
+
       this.broadcast({ type: 'state', data: this.state });
       this.addLog(`Orchestration stopped for project ${id} by ${username}`);
+
+      // Story 4.7: End history recording with stopped status
+      endRun('stopped', {
+        completed: this.state.progress.completedStories,
+        failed: this.state.progress.failedStories,
+        total: this.state.progress.totalStories,
+      });
+      this.currentRunId = null;
 
       res.json({
         data: {
@@ -467,6 +551,11 @@ class DashboardServer {
   async startOrchestration(options = {}) {
     this.isRunning = true;
     this.isPaused = false;
+
+    // Use active project, fallback to server's project for backward compatibility
+    const orchestrateProjectPath = this.activeProjectPath || this.projectRoot;
+    const orchestrateConfig = this.activeProjectConfig || this.config;
+
     this.state.status = 'running';
     this.state.startTime = new Date().toISOString();
     this.state.endTime = null;
@@ -484,17 +573,22 @@ class DashboardServer {
 
     this.broadcast({ type: 'state', data: this.state });
 
-    try {
-      // Reload config
-      this.loadProjectConfig();
+    // Story 4.7: Start history recording
+    const projectName = orchestrateProjectPath.split('/').pop();
+    this.currentRunId = startRun(projectName, orchestrateConfig);
+    this.addLog(`History recording started for run ${this.currentRunId}`);
 
-      // Parse plan to get totals
-      const epics = parseEpicsFile(this.config.epicsPath);
-      const status = parseSprintStatus(this.config.sprintStatusPath);
+    try {
+      // Parse plan to get totals using active project config
+      const epics = parseEpicsFile(orchestrateConfig.epicsPath);
+      const status = parseSprintStatus(orchestrateConfig.sprintStatusPath);
       const plan = buildExecutionPlan(epics, status, options);
 
       this.state.progress.totalEpics = plan.epics.length;
       this.state.progress.totalStories = plan.totalStories;
+
+      // Story 4.7: Update stories total for history
+      updateStoriesTotalForCurrentRun(plan.totalStories);
 
       // Initialize epic/story state
       for (const epic of plan.epics) {
@@ -520,9 +614,9 @@ class DashboardServer {
 
       this.broadcast({ type: 'state', data: this.state });
 
-      // Create orchestrator with custom logger
-      this.orchestrator = new Orchestrator(this.projectRoot, {
-        ...this.config,
+      // Create orchestrator with ACTIVE project path and config
+      this.orchestrator = new Orchestrator(orchestrateProjectPath, {
+        ...orchestrateConfig,
         ...options,
         autoRun: true,
       });
@@ -541,14 +635,33 @@ class DashboardServer {
       this.state.endTime = new Date().toISOString();
       this.state.duration = this.calculateDuration();
       this.addLog(`Orchestration completed in ${this.state.duration}`);
+
+      // Story 4.7: End history recording with completed status
+      endRun('completed', {
+        completed: this.state.progress.completedStories,
+        failed: this.state.progress.failedStories,
+        total: this.state.progress.totalStories,
+      });
     } catch (error) {
       this.state.status = 'failed';
       this.state.endTime = new Date().toISOString();
       this.state.duration = this.calculateDuration();
       this.addLog(`Orchestration failed: ${error.message}`);
+
+      // Story 4.7: End history recording with failed status
+      endRun('failed', {
+        completed: this.state.progress.completedStories,
+        failed: this.state.progress.failedStories,
+        total: this.state.progress.totalStories,
+      });
     }
 
+    // Reset orchestration state
     this.isRunning = false;
+    this.currentRunId = null;
+    this.activeProjectPath = null;
+    this.activeProjectConfig = null;
+    this.state.activeProject = null;
     this.broadcast({ type: 'state', data: this.state });
   }
 
@@ -624,6 +737,13 @@ class DashboardServer {
         story.status = 'running';
         story.step = 'starting';
         this.state.progress.inProgressStories++;
+
+        // Story 4.7: Record agent spawn event
+        recordEvent('agent:spawn', {
+          storyId,
+          epicNumber: story.epicNumber,
+          details: { step: 'starting' },
+        });
       }
     }
 
@@ -657,6 +777,13 @@ class DashboardServer {
         story.step = 'done';
         this.state.progress.completedStories++;
         this.state.progress.inProgressStories = Math.max(0, this.state.progress.inProgressStories - 1);
+
+        // Story 4.7: Record agent complete event
+        recordEvent('agent:complete', {
+          storyId,
+          epicNumber: story.epicNumber,
+          details: { status: 'completed' },
+        });
       }
     }
 
@@ -670,6 +797,13 @@ class DashboardServer {
         story.error = error;
         this.state.progress.failedStories++;
         this.state.progress.inProgressStories = Math.max(0, this.state.progress.inProgressStories - 1);
+
+        // Story 4.7: Record agent error event
+        recordEvent('agent:error', {
+          storyId,
+          epicNumber: story.epicNumber,
+          details: { error, status: 'failed' },
+        });
       }
     }
 

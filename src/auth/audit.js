@@ -51,6 +51,26 @@ export function logRateLimited({ ip, endpoint, attempts }) {
 }
 
 /**
+ * Log a generic action (for API actions like project:start, project:stop)
+ * @param {string} user - Username performing the action
+ * @param {string} action - The action type
+ * @param {string} project - Project ID
+ * @param {object} details - Event details
+ */
+export function logAction(user, action, project, details = {}) {
+  try {
+    const db = getDb();
+    const stmt = db.prepare(`
+      INSERT INTO audit_log (user, action, project, details)
+      VALUES (?, ?, ?, ?)
+    `);
+    stmt.run(user, action, project, JSON.stringify(details));
+  } catch (error) {
+    console.error('Failed to log action:', error.message);
+  }
+}
+
+/**
  * Log a generic auth event
  * @param {string} action - The action type (oauth_start, login, login_denied, auth_error)
  * @param {object} details - Event details

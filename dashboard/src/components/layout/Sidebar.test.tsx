@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { BrowserRouter } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { useUIStore } from '@/stores/uiStore';
+
+// Wrap component with Router for testing
+const renderWithRouter = (ui: React.ReactElement) => {
+  return render(<BrowserRouter>{ui}</BrowserRouter>);
+};
 
 // Mock localStorage
 const localStorageMock = (() => {
@@ -30,28 +36,28 @@ describe('Sidebar', () => {
   });
 
   it('renders with expanded width (200px) by default', () => {
-    render(<Sidebar />);
+    renderWithRouter(<Sidebar />);
     const sidebar = screen.getByRole('navigation');
     expect(sidebar).toHaveClass('w-[200px]');
   });
 
   it('displays "No projects yet" message when empty and expanded', () => {
-    render(<Sidebar />);
+    renderWithRouter(<Sidebar />);
     expect(screen.getByText('No projects yet')).toBeInTheDocument();
   });
 
   it('renders New Project button', () => {
-    render(<Sidebar />);
+    renderWithRouter(<Sidebar />);
     expect(screen.getByText('New Project')).toBeInTheDocument();
   });
 
   it('renders Collapse button when expanded', () => {
-    render(<Sidebar />);
+    renderWithRouter(<Sidebar />);
     expect(screen.getByText('Collapse')).toBeInTheDocument();
   });
 
   it('collapses sidebar when collapse button is clicked', () => {
-    render(<Sidebar />);
+    renderWithRouter(<Sidebar />);
     const collapseButton = screen.getByRole('button', { name: /collapse sidebar/i });
 
     fireEvent.click(collapseButton);
@@ -64,7 +70,7 @@ describe('Sidebar', () => {
     // Start collapsed
     useUIStore.setState({ sidebarCollapsed: true });
 
-    render(<Sidebar />);
+    renderWithRouter(<Sidebar />);
     const expandButton = screen.getByRole('button', { name: /expand sidebar/i });
 
     fireEvent.click(expandButton);
@@ -74,7 +80,7 @@ describe('Sidebar', () => {
   });
 
   it('persists collapsed state to localStorage', () => {
-    render(<Sidebar />);
+    renderWithRouter(<Sidebar />);
     const collapseButton = screen.getByRole('button', { name: /collapse sidebar/i });
 
     fireEvent.click(collapseButton);
@@ -83,13 +89,13 @@ describe('Sidebar', () => {
   });
 
   it('has proper background color', () => {
-    render(<Sidebar />);
+    renderWithRouter(<Sidebar />);
     const sidebar = screen.getByRole('navigation');
     expect(sidebar).toHaveClass('bg-[#1E2329]');
   });
 
   it('has smooth transition animation class', () => {
-    render(<Sidebar />);
+    renderWithRouter(<Sidebar />);
     const sidebar = screen.getByRole('navigation');
     expect(sidebar).toHaveClass('transition-all');
     expect(sidebar).toHaveClass('duration-200');
@@ -99,7 +105,7 @@ describe('Sidebar', () => {
   it('hides text labels when collapsed', () => {
     useUIStore.setState({ sidebarCollapsed: true });
 
-    render(<Sidebar />);
+    renderWithRouter(<Sidebar />);
 
     // "Collapse" text should not be visible when collapsed
     expect(screen.queryByText('Collapse')).not.toBeInTheDocument();
@@ -108,13 +114,13 @@ describe('Sidebar', () => {
   });
 
   it('has proper aria-label for accessibility', () => {
-    render(<Sidebar />);
+    renderWithRouter(<Sidebar />);
     const sidebar = screen.getByRole('navigation');
     expect(sidebar).toHaveAttribute('aria-label', 'Project navigation');
   });
 
   it('collapse button has aria-expanded attribute', () => {
-    render(<Sidebar />);
+    renderWithRouter(<Sidebar />);
     const collapseButton = screen.getByRole('button', { name: /collapse sidebar/i });
     expect(collapseButton).toHaveAttribute('aria-expanded', 'true');
   });

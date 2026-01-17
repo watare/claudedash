@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, useSearchParams, useNavigate } from 'reac
 import { useEffect } from 'react';
 import { Login } from '@/pages/Login';
 import { ProjectView } from '@/pages/ProjectView';
+import { History } from '@/pages/History';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { Layout } from '@/components/layout';
 import { useAuthStore } from '@/stores/authStore';
@@ -39,6 +40,17 @@ function App() {
             <ProtectedRoute>
               <Layout>
                 <ProjectView />
+              </Layout>
+            </ProtectedRoute>
+          }
+        />
+        {/* Execution history view - Story 4.7 */}
+        <Route
+          path="/history"
+          element={
+            <ProtectedRoute>
+              <Layout>
+                <History />
               </Layout>
             </ProtectedRoute>
           }
