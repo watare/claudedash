@@ -14,6 +14,7 @@ export interface Agent {
   lastActivity: string;
   lastOutput: string;
   duration: number;
+  stuckAt: string | null; // Story 4.6: ISO timestamp when marked stuck, null if not stuck
 }
 
 export interface AgentWithHistory extends Agent {

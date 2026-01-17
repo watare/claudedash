@@ -43,7 +43,9 @@ interface AgentKillPayload {
 
 interface AgentStuckPayload {
   agentId: string;
-  duration: number;
+  storyId: string;
+  duration: string;         // Human-readable format: "45m" or "1h 30m"
+  durationMinutes: number;  // Duration in minutes
 }
 
 interface StoryVerifiedPayload {
@@ -121,6 +123,7 @@ export function useWebSocket() {
         lastActivity: msg.timestamp || new Date().toISOString(),
         lastOutput: 'Starting...',
         duration: 0,
+        stuckAt: null,
       };
       addAgent(newAgent);
     });
@@ -153,11 +156,15 @@ export function useWebSocket() {
       const agents = useAgentsStore.getState().agents;
       const agent = agents.find((a) => a.id === data.agentId);
       if (agent) {
-        updateAgent({ ...agent, status: 'stuck' });
+        updateAgent({
+          ...agent,
+          status: 'stuck',
+          stuckAt: msg.timestamp || new Date().toISOString(),
+        });
       }
       addToast({
         type: 'warning',
-        message: `Agent stuck on story for ${Math.round(data.duration / 60)}m`,
+        message: `Agent stuck on story ${data.storyId} for ${data.duration}`,
       });
     });
 

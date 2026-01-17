@@ -178,21 +178,24 @@ describe('WebSocket Broadcast Service', () => {
   });
 
   describe('emitAgentStuck', () => {
-    it('should broadcast agent:stuck event', () => {
+    it('should broadcast agent:stuck event with Story 4.6 format', () => {
       const ws = createMockWs('user1');
       mockClients.set('user1', ws);
 
       emitAgentStuck({
-        id: 'agent-1',
-        projectId: 'proj-1',
-      }, 3600);
+        agentId: 'agent-1',
+        storyId: '4-6',
+        duration: '45m',
+        durationMinutes: 45,
+      });
 
       const message = JSON.parse(ws.send.mock.calls[0][0]);
       expect(message.type).toBe('agent:stuck');
       expect(message.data).toEqual({
         agentId: 'agent-1',
-        projectId: 'proj-1',
-        duration: 3600,
+        storyId: '4-6',
+        duration: '45m',
+        durationMinutes: 45,
       });
     });
   });

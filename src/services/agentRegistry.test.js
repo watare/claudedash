@@ -16,6 +16,8 @@ import {
   hasAgent,
   getAgentCount,
   clearAllAgents,
+  markStuck,
+  getStuckAgents,
 } from './agentRegistry.js';
 
 describe('Agent Registry Service', () => {
@@ -224,6 +226,77 @@ describe('Agent Registry Service', () => {
 
       expect(getAgentCount()).toBe(0);
       expect(getAllAgents()).toEqual([]);
+    });
+  });
+
+  // Story 4.6: Stuck Agent Detection Tests
+  describe('markStuck', () => {
+    it('marks agent as stuck with timestamp', () => {
+      registerAgent('agent-stuck-1', createMockProcess(), {});
+
+      const result = markStuck('agent-stuck-1');
+
+      expect(result).toBe(true);
+      const agent = getAgent('agent-stuck-1');
+      expect(agent.status).toBe('stuck');
+      expect(agent.stuckAt).toBeDefined();
+      expect(new Date(agent.stuckAt)).toBeInstanceOf(Date);
+    });
+
+    it('returns false if agent already stuck', () => {
+      registerAgent('agent-stuck-2', createMockProcess(), {});
+      markStuck('agent-stuck-2');
+
+      const result = markStuck('agent-stuck-2');
+
+      expect(result).toBe(false);
+    });
+
+    it('returns false for non-existent agent', () => {
+      const result = markStuck('non-existent');
+
+      expect(result).toBe(false);
+    });
+  });
+
+  describe('updateAgentActivity - unsticking', () => {
+    it('resets stuckAt when activity is updated', () => {
+      registerAgent('agent-unstick-1', createMockProcess(), {});
+      markStuck('agent-unstick-1');
+
+      expect(getAgent('agent-unstick-1').stuckAt).not.toBeNull();
+
+      updateAgentActivity('agent-unstick-1');
+
+      const agent = getAgent('agent-unstick-1');
+      expect(agent.stuckAt).toBeNull();
+      expect(agent.status).toBe('running');
+    });
+  });
+
+  describe('getStuckAgents', () => {
+    it('returns only agents with stuckAt set', () => {
+      registerAgent('agent-filter-1', createMockProcess(5001), {});
+      registerAgent('agent-filter-2', createMockProcess(5002), {});
+      registerAgent('agent-filter-3', createMockProcess(5003), {});
+
+      markStuck('agent-filter-1');
+      markStuck('agent-filter-3');
+
+      const stuckAgents = getStuckAgents();
+
+      expect(stuckAgents).toHaveLength(2);
+      expect(stuckAgents.map(a => a.id)).toContain('agent-filter-1');
+      expect(stuckAgents.map(a => a.id)).toContain('agent-filter-3');
+      expect(stuckAgents.map(a => a.id)).not.toContain('agent-filter-2');
+    });
+
+    it('returns empty array when no stuck agents', () => {
+      registerAgent('agent-none-stuck', createMockProcess(), {});
+
+      const stuckAgents = getStuckAgents();
+
+      expect(stuckAgents).toEqual([]);
     });
   });
 });

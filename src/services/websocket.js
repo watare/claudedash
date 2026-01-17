@@ -109,15 +109,15 @@ export function emitAgentComplete(agent, result) {
 }
 
 /**
- * Emit agent:stuck event when agent is detected as stuck
- * @param {{ id: string, projectId: string }} agent
- * @param {number} duration - Duration in seconds
+ * Emit agent:stuck event when agent is detected as stuck (Story 4.6)
+ * @param {{ agentId: string, storyId: string, duration: string, durationMinutes: number }} data
  */
-export function emitAgentStuck(agent, duration) {
+export function emitAgentStuck(data) {
   broadcast('agent:stuck', {
-    agentId: agent.id,
-    projectId: agent.projectId,
-    duration,
+    agentId: data.agentId,
+    storyId: data.storyId,
+    duration: data.duration,
+    durationMinutes: data.durationMinutes,
   });
 }
 

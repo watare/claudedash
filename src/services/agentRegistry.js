@@ -17,7 +17,8 @@
  * @property {string} projectId - Project identifier
  * @property {string} startedAt - ISO timestamp
  * @property {string} lastActivity - ISO timestamp
- * @property {string} status - Agent status: 'running' | 'completed' | 'failed' | 'killed'
+ * @property {string|null} stuckAt - ISO timestamp when marked stuck, null if not stuck
+ * @property {string} status - Agent status: 'running' | 'completed' | 'failed' | 'killed' | 'stuck'
  */
 
 /**
@@ -45,6 +46,7 @@ export function registerAgent(id, childProcess, metadata = {}) {
     projectId: metadata.projectId || null,
     startedAt: now,
     lastActivity: now,
+    stuckAt: null,
     status: 'running',
   };
 
@@ -104,13 +106,45 @@ export function updateAgentStatus(id, status) {
 
 /**
  * Update agent last activity timestamp
+ * If agent was stuck, this un-sticks it (resets stuckAt and status)
  * @param {string} id - Agent ID
  */
 export function updateAgentActivity(id) {
   const agent = agentProcesses.get(id);
   if (agent) {
     agent.lastActivity = new Date().toISOString();
+    // If agent was stuck, reset it back to running
+    if (agent.stuckAt) {
+      agent.stuckAt = null;
+      agent.status = 'running';
+    }
   }
+}
+
+/**
+ * Mark an agent as stuck
+ * Sets stuckAt timestamp and updates status to 'stuck'
+ * @param {string} id - Agent ID
+ * @returns {boolean} True if agent was marked stuck, false if not found or already stuck
+ */
+export function markStuck(id) {
+  const agent = agentProcesses.get(id);
+  if (agent && !agent.stuckAt) {
+    agent.stuckAt = new Date().toISOString();
+    agent.status = 'stuck';
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Get all stuck agents
+ * @returns {RegisteredAgent[]}
+ */
+export function getStuckAgents() {
+  return Array.from(agentProcesses.values()).filter(
+    (agent) => agent.stuckAt !== null
+  );
 }
 
 /**

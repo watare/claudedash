@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { AlertTriangle, XCircle } from 'lucide-react';
 import { formatDuration } from '@/utils/formatters';
 import { KillButton } from './KillButton';
+import { StuckAgentIndicator } from './StuckAgentIndicator';
 import type { Agent } from '@/types/agent';
 
 interface AgentRowProps {
@@ -12,9 +13,9 @@ interface AgentRowProps {
   isKilling?: boolean;
 }
 
-// Configurable thresholds via environment variables (defaults: 30min warn, 45min stuck)
-const WARN_THRESHOLD = parseInt(import.meta.env.VITE_AGENT_WARN_THRESHOLD || '1800', 10); // 30 minutes in seconds
-const STUCK_THRESHOLD = parseInt(import.meta.env.VITE_AGENT_STUCK_THRESHOLD || '2700', 10); // 45 minutes in seconds
+// Configurable thresholds via environment variables (defaults: 25min warn, 30min stuck - matches backend)
+const WARN_THRESHOLD = parseInt(import.meta.env.VITE_AGENT_WARN_THRESHOLD || '1500', 10); // 25 minutes in seconds
+const STUCK_THRESHOLD = parseInt(import.meta.env.VITE_AGENT_STUCK_THRESHOLD || '1800', 10); // 30 minutes in seconds (matches backend config.stuckThresholdMinutes)
 
 export function AgentRow({ agent, onKill, onViewLogs, isKilling }: AgentRowProps) {
   const [currentDuration, setCurrentDuration] = useState(agent.duration);
@@ -39,8 +40,9 @@ export function AgentRow({ agent, onKill, onViewLogs, isKilling }: AgentRowProps
     setCurrentDuration(agent.duration);
   }, [agent.duration]);
 
-  const isWarning = currentDuration > WARN_THRESHOLD && currentDuration <= STUCK_THRESHOLD;
-  const isStuck = currentDuration > STUCK_THRESHOLD;
+  // Agent is stuck if stuckAt is set OR if duration exceeds threshold (fallback)
+  const isStuck = agent.stuckAt !== null || currentDuration > STUCK_THRESHOLD;
+  const isWarning = !isStuck && currentDuration > WARN_THRESHOLD && currentDuration <= STUCK_THRESHOLD;
   const showActions = isWarning || isStuck;
 
   const getIndicator = () => {
@@ -102,23 +104,31 @@ export function AgentRow({ agent, onKill, onViewLogs, isKilling }: AgentRowProps
         </span>
       </div>
 
+      {/* Show StuckAgentIndicator when agent has stuckAt set (Story 4.6 AC3) */}
+      {agent.stuckAt && (
+        <div className="mt-1 ml-5">
+          <StuckAgentIndicator stuckAt={agent.stuckAt} />
+        </div>
+      )}
+
       <p className="mt-1 ml-5 text-xs text-[#5E6673] truncate">
         Last: "{truncateOutput(agent.lastOutput)}"
       </p>
 
-      {/* Kill button always visible per AC1, View Logs only when warning/stuck */}
+      {/* Kill and View Logs buttons more prominent when stuck (Story 4.6 AC3) */}
       <div className="mt-2 ml-5 flex gap-2">
         <KillButton
           agentId={agent.id}
           storyId={agent.storyId || 'unknown'}
           onKillRequest={() => onKill(agent.id)}
           isKilling={isKilling}
+          prominent={isStuck}
         />
         {showActions && (
           <Button
-            variant="ghost"
+            variant={isStuck ? 'secondary' : 'ghost'}
             size="sm"
-            className="h-7 text-xs"
+            className={isStuck ? 'h-7 text-xs bg-[#2B3139] hover:bg-[#3B4149]' : 'h-7 text-xs'}
             onClick={() => onViewLogs(agent.id)}
           >
             View Logs

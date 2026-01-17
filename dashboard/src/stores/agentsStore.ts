@@ -94,3 +94,7 @@ export const useAgentsStore = create<AgentsState>((set) => ({
 
   clearError: () => set({ error: null }),
 }));
+
+// Story 4.6: Selector for stuck agents
+export const useStuckAgents = () =>
+  useAgentsStore((state) => state.agents.filter((a) => a.stuckAt !== null));

@@ -17,6 +17,7 @@ describe('AgentRow', () => {
     lastActivity: new Date().toISOString(),
     lastOutput: 'Working on implementation...',
     duration: 300, // 5 minutes
+    stuckAt: null, // Story 4.6: Not stuck by default
     ...overrides,
   });
 
@@ -38,23 +39,23 @@ describe('AgentRow', () => {
     expect(screen.getByText(/Story 2-3/)).toBeInTheDocument();
   });
 
-  it('displays pulsing indicator for running agent under 30 minutes', () => {
+  it('displays pulsing indicator for running agent under 25 minutes', () => {
     const agent = createMockAgent({ duration: 300 }); // 5 minutes
     render(<AgentRow agent={agent} onKill={mockOnKill} onViewLogs={mockOnViewLogs} />);
 
     expect(screen.getByTestId('pulsing-indicator')).toBeInTheDocument();
   });
 
-  it('shows warning indicator for agent running 30-45 minutes', () => {
-    const agent = createMockAgent({ duration: 35 * 60 }); // 35 minutes
+  it('shows warning indicator for agent running 25-30 minutes', () => {
+    const agent = createMockAgent({ duration: 27 * 60 }); // 27 minutes (between 25 and 30)
     render(<AgentRow agent={agent} onKill={mockOnKill} onViewLogs={mockOnViewLogs} />);
 
     expect(screen.getByTestId('warning-indicator')).toBeInTheDocument();
     expect(screen.queryByTestId('pulsing-indicator')).not.toBeInTheDocument();
   });
 
-  it('shows stuck indicator for agent running over 45 minutes', () => {
-    const agent = createMockAgent({ duration: 50 * 60 }); // 50 minutes
+  it('shows stuck indicator for agent running over 30 minutes', () => {
+    const agent = createMockAgent({ duration: 35 * 60 }); // 35 minutes
     render(<AgentRow agent={agent} onKill={mockOnKill} onViewLogs={mockOnViewLogs} />);
 
     expect(screen.getByTestId('stuck-indicator')).toBeInTheDocument();
@@ -70,14 +71,14 @@ describe('AgentRow', () => {
   });
 
   it('displays "Stuck" text for stuck agents', () => {
-    const agent = createMockAgent({ duration: 50 * 60 }); // 50 minutes
+    const agent = createMockAgent({ duration: 35 * 60 }); // 35 minutes (>30min threshold)
     render(<AgentRow agent={agent} onKill={mockOnKill} onViewLogs={mockOnViewLogs} />);
 
     expect(screen.getByText(/Stuck/)).toBeInTheDocument();
   });
 
   it('shows action buttons when agent is warning', () => {
-    const agent = createMockAgent({ duration: 35 * 60 }); // 35 minutes
+    const agent = createMockAgent({ duration: 27 * 60 }); // 27 minutes (between 25-30)
     render(<AgentRow agent={agent} onKill={mockOnKill} onViewLogs={mockOnViewLogs} />);
 
     expect(screen.getByRole('button', { name: /kill/i })).toBeInTheDocument();
@@ -85,7 +86,7 @@ describe('AgentRow', () => {
   });
 
   it('shows action buttons when agent is stuck', () => {
-    const agent = createMockAgent({ duration: 50 * 60 }); // 50 minutes
+    const agent = createMockAgent({ duration: 35 * 60 }); // 35 minutes (>30min threshold)
     render(<AgentRow agent={agent} onKill={mockOnKill} onViewLogs={mockOnViewLogs} />);
 
     expect(screen.getByRole('button', { name: /kill/i })).toBeInTheDocument();
@@ -103,7 +104,7 @@ describe('AgentRow', () => {
   });
 
   it('calls onKill when Kill button is clicked', () => {
-    const agent = createMockAgent({ duration: 50 * 60 }); // 50 minutes
+    const agent = createMockAgent({ duration: 35 * 60 }); // 35 minutes (>30min threshold)
     render(<AgentRow agent={agent} onKill={mockOnKill} onViewLogs={mockOnViewLogs} />);
 
     fireEvent.click(screen.getByRole('button', { name: /kill/i }));
@@ -112,7 +113,7 @@ describe('AgentRow', () => {
   });
 
   it('calls onViewLogs when View Logs button is clicked', () => {
-    const agent = createMockAgent({ duration: 50 * 60 }); // 50 minutes
+    const agent = createMockAgent({ duration: 35 * 60 }); // 35 minutes (>30min threshold)
     render(<AgentRow agent={agent} onKill={mockOnKill} onViewLogs={mockOnViewLogs} />);
 
     fireEvent.click(screen.getByRole('button', { name: /view logs/i }));

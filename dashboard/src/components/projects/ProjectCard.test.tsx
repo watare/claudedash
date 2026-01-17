@@ -167,6 +167,129 @@ describe('ProjectCard', () => {
     });
   });
 
+  describe('Start Workflow Button', () => {
+    it('shows Start Workflow button when status is idle and onStartWorkflow provided', () => {
+      const project = createMockProject({ status: 'idle' });
+      render(<ProjectCard project={project} {...defaultProps} onStartWorkflow={vi.fn()} />);
+      expect(screen.getByTestId('start-workflow-button')).toBeInTheDocument();
+    });
+
+    it('shows Start Workflow button when status is waiting', () => {
+      const project = createMockProject({ status: 'waiting' });
+      render(<ProjectCard project={project} {...defaultProps} onStartWorkflow={vi.fn()} />);
+      expect(screen.getByTestId('start-workflow-button')).toBeInTheDocument();
+    });
+
+    it('shows Start Workflow button when status is done', () => {
+      const project = createMockProject({ status: 'done' });
+      render(<ProjectCard project={project} {...defaultProps} onStartWorkflow={vi.fn()} />);
+      expect(screen.getByTestId('start-workflow-button')).toBeInTheDocument();
+    });
+
+    it('does not show Start Workflow button when status is running', () => {
+      const project = createMockProject({ status: 'running' });
+      render(<ProjectCard project={project} {...defaultProps} onStartWorkflow={vi.fn()} />);
+      expect(screen.queryByTestId('start-workflow-button')).not.toBeInTheDocument();
+    });
+
+    it('does not show Start Workflow button when onStartWorkflow is not provided', () => {
+      const project = createMockProject({ status: 'idle' });
+      render(<ProjectCard project={project} {...defaultProps} />);
+      expect(screen.queryByTestId('start-workflow-button')).not.toBeInTheDocument();
+    });
+
+    it('calls onStartWorkflow with project id when clicked', () => {
+      const onStartWorkflow = vi.fn();
+      const project = createMockProject({ id: 'proj-start', status: 'idle' });
+      render(<ProjectCard project={project} {...defaultProps} onStartWorkflow={onStartWorkflow} />);
+      fireEvent.click(screen.getByTestId('start-workflow-button'));
+      expect(onStartWorkflow).toHaveBeenCalledWith('proj-start');
+    });
+
+    it('shows loading state when isStarting is true', () => {
+      const project = createMockProject({ status: 'idle' });
+      render(
+        <ProjectCard project={project} {...defaultProps} onStartWorkflow={vi.fn()} isStarting />
+      );
+      expect(screen.getByText('Starting...')).toBeInTheDocument();
+    });
+
+    it('disables button when isStarting is true', () => {
+      const project = createMockProject({ status: 'idle' });
+      render(
+        <ProjectCard project={project} {...defaultProps} onStartWorkflow={vi.fn()} isStarting />
+      );
+      expect(screen.getByTestId('start-workflow-button')).toBeDisabled();
+    });
+
+    it('has gold background styling', () => {
+      const project = createMockProject({ status: 'idle' });
+      render(<ProjectCard project={project} {...defaultProps} onStartWorkflow={vi.fn()} />);
+      expect(screen.getByTestId('start-workflow-button')).toHaveClass('bg-[#F0B90B]');
+    });
+  });
+
+  describe('Stop Workflow Button', () => {
+    it('shows Stop button when status is running and onStopWorkflow provided', () => {
+      const project = createMockProject({ status: 'running' });
+      render(<ProjectCard project={project} {...defaultProps} onStopWorkflow={vi.fn()} />);
+      expect(screen.getByTestId('stop-workflow-button')).toBeInTheDocument();
+    });
+
+    it('does not show Stop button when status is not running', () => {
+      const project = createMockProject({ status: 'idle' });
+      render(<ProjectCard project={project} {...defaultProps} onStopWorkflow={vi.fn()} />);
+      expect(screen.queryByTestId('stop-workflow-button')).not.toBeInTheDocument();
+    });
+
+    it('does not show Stop button when onStopWorkflow is not provided', () => {
+      const project = createMockProject({ status: 'running' });
+      render(<ProjectCard project={project} {...defaultProps} />);
+      expect(screen.queryByTestId('stop-workflow-button')).not.toBeInTheDocument();
+    });
+
+    it('calls onStopWorkflow with project id when clicked', () => {
+      const onStopWorkflow = vi.fn();
+      const project = createMockProject({ id: 'proj-stop', status: 'running' });
+      render(<ProjectCard project={project} {...defaultProps} onStopWorkflow={onStopWorkflow} />);
+      fireEvent.click(screen.getByTestId('stop-workflow-button'));
+      expect(onStopWorkflow).toHaveBeenCalledWith('proj-stop');
+    });
+
+    it('shows loading state when isStopping is true', () => {
+      const project = createMockProject({ status: 'running' });
+      render(
+        <ProjectCard project={project} {...defaultProps} onStopWorkflow={vi.fn()} isStopping />
+      );
+      expect(screen.getByText('Stopping...')).toBeInTheDocument();
+    });
+
+    it('disables button when isStopping is true', () => {
+      const project = createMockProject({ status: 'running' });
+      render(
+        <ProjectCard project={project} {...defaultProps} onStopWorkflow={vi.fn()} isStopping />
+      );
+      expect(screen.getByTestId('stop-workflow-button')).toBeDisabled();
+    });
+
+    it('has destructive variant styling', () => {
+      const project = createMockProject({ status: 'running' });
+      render(<ProjectCard project={project} {...defaultProps} onStopWorkflow={vi.fn()} />);
+      expect(screen.getByTestId('stop-workflow-button')).toHaveAttribute('data-variant', 'destructive');
+    });
+  });
+
+  describe('Null Status Handling', () => {
+    it('handles undefined status by defaulting to idle behavior', () => {
+      const project = createMockProject();
+      // @ts-expect-error Testing undefined status
+      project.status = undefined;
+      render(<ProjectCard project={project} {...defaultProps} onStartWorkflow={vi.fn()} />);
+      // Should show Start Workflow button (idle behavior)
+      expect(screen.getByTestId('start-workflow-button')).toBeInTheDocument();
+    });
+  });
+
   describe('Keyboard Accessibility', () => {
     it('card is focusable with tabIndex', () => {
       const project = createMockProject();

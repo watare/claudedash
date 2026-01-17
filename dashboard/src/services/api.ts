@@ -214,3 +214,69 @@ export async function retryStory(storyId: string): Promise<RetryStoryFullRespons
 
   return response.json();
 }
+
+// --- History API functions (Story 4.7) ---
+
+import type {
+  ExecutionRun,
+  ExecutionRunWithEvents,
+  PaginationMeta,
+} from '../types/history';
+
+export interface HistoryResponse {
+  data: ExecutionRun[];
+  meta: PaginationMeta & { timestamp: string };
+}
+
+export interface RunDetailResponse {
+  data: ExecutionRunWithEvents;
+  meta: { timestamp: string };
+}
+
+/**
+ * Fetch execution history with optional filters and pagination
+ * @param options Query options including filters and pagination
+ * @returns List of execution runs with pagination metadata
+ */
+export async function fetchHistory(options: {
+  project?: string | null;
+  status?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  page?: number;
+  limit?: number;
+}): Promise<HistoryResponse> {
+  const params = new URLSearchParams();
+
+  if (options.project) params.set('project', options.project);
+  if (options.status) params.set('status', options.status);
+  if (options.startDate) params.set('startDate', options.startDate);
+  if (options.endDate) params.set('endDate', options.endDate);
+  params.set('page', String(options.page || 1));
+  params.set('limit', String(options.limit || 20));
+
+  const response = await apiFetch(`/api/history?${params}`);
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Failed to fetch history' }));
+    throw new Error(error.error || 'Failed to fetch history');
+  }
+
+  return response.json();
+}
+
+/**
+ * Fetch a specific run with its events
+ * @param runId The run ID
+ * @returns Run details with events
+ */
+export async function fetchRunDetail(runId: number): Promise<RunDetailResponse> {
+  const response = await apiFetch(`/api/history/${runId}`);
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Failed to fetch run details' }));
+    throw new Error(error.error || 'Failed to fetch run details');
+  }
+
+  return response.json();
+}

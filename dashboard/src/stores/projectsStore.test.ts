@@ -10,6 +10,7 @@ import type { Project } from '../types/project';
 // Mock the api module
 vi.mock('../services/api', () => ({
   apiGet: vi.fn(),
+  apiPost: vi.fn(),
 }));
 
 const mockProjects: Project[] = [
@@ -57,6 +58,8 @@ describe('projectsStore', () => {
       currentProject: null,
       isLoading: false,
       error: null,
+      startingProjectId: null,
+      stoppingProjectId: null,
     });
   });
 
@@ -168,6 +171,106 @@ describe('projectsStore', () => {
       useProjectsStore.getState().clearError();
 
       expect(useProjectsStore.getState().error).toBeNull();
+    });
+  });
+
+  describe('startProject', () => {
+    it('sets startingProjectId while starting', async () => {
+      vi.mocked(api.apiPost).mockImplementation(() => new Promise(() => {})); // Never resolves
+      useProjectsStore.setState({ projects: mockProjects });
+
+      useProjectsStore.getState().startProject('bmad-orchestrator');
+
+      expect(useProjectsStore.getState().startingProjectId).toBe('bmad-orchestrator');
+    });
+
+    it('starts project and updates status', async () => {
+      vi.mocked(api.apiPost).mockResolvedValue({ projectId: 'bmad-orchestrator', status: 'starting' });
+      useProjectsStore.setState({ projects: mockProjects });
+
+      const result = await useProjectsStore.getState().startProject('bmad-orchestrator');
+
+      expect(api.apiPost).toHaveBeenCalledWith('/api/projects/bmad-orchestrator/start');
+      expect(result.success).toBe(true);
+      expect(useProjectsStore.getState().startingProjectId).toBeNull();
+      expect(useProjectsStore.getState().projects[0].status).toBe('running');
+    });
+
+    it('handles start errors', async () => {
+      vi.mocked(api.apiPost).mockRejectedValue(new Error('Failed to start'));
+      useProjectsStore.setState({ projects: mockProjects });
+
+      const result = await useProjectsStore.getState().startProject('bmad-orchestrator');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Failed to start');
+      expect(useProjectsStore.getState().startingProjectId).toBeNull();
+    });
+  });
+
+  describe('stopProject', () => {
+    it('sets stoppingProjectId while stopping', async () => {
+      vi.mocked(api.apiPost).mockImplementation(() => new Promise(() => {})); // Never resolves
+      useProjectsStore.setState({ projects: mockProjects });
+
+      useProjectsStore.getState().stopProject('bmad-orchestrator');
+
+      expect(useProjectsStore.getState().stoppingProjectId).toBe('bmad-orchestrator');
+    });
+
+    it('stops project and updates status', async () => {
+      vi.mocked(api.apiPost).mockResolvedValue({ projectId: 'bmad-orchestrator', status: 'stopped' });
+      useProjectsStore.setState({ projects: mockProjects });
+
+      const result = await useProjectsStore.getState().stopProject('bmad-orchestrator');
+
+      expect(api.apiPost).toHaveBeenCalledWith('/api/projects/bmad-orchestrator/stop');
+      expect(result.success).toBe(true);
+      expect(useProjectsStore.getState().stoppingProjectId).toBeNull();
+      expect(useProjectsStore.getState().projects[0].status).toBe('idle');
+    });
+
+    it('handles stop errors', async () => {
+      vi.mocked(api.apiPost).mockRejectedValue(new Error('Failed to stop'));
+      useProjectsStore.setState({ projects: mockProjects });
+
+      const result = await useProjectsStore.getState().stopProject('bmad-orchestrator');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Failed to stop');
+      expect(useProjectsStore.getState().stoppingProjectId).toBeNull();
+    });
+  });
+
+  describe('updateProjectStatus', () => {
+    it('updates status in projects array', () => {
+      useProjectsStore.setState({ projects: mockProjects });
+
+      useProjectsStore.getState().updateProjectStatus('bmad-orchestrator', 'done');
+
+      expect(useProjectsStore.getState().projects[0].status).toBe('done');
+    });
+
+    it('updates status in currentProject if matching', () => {
+      useProjectsStore.setState({
+        projects: mockProjects,
+        currentProject: mockProjectDetail,
+      });
+
+      useProjectsStore.getState().updateProjectStatus('bmad-orchestrator', 'paused');
+
+      expect(useProjectsStore.getState().currentProject?.status).toBe('paused');
+    });
+
+    it('does not update currentProject if not matching', () => {
+      useProjectsStore.setState({
+        projects: mockProjects,
+        currentProject: { ...mockProjectDetail, id: 'other-project' },
+      });
+
+      useProjectsStore.getState().updateProjectStatus('bmad-orchestrator', 'paused');
+
+      expect(useProjectsStore.getState().currentProject?.status).toBe('running');
     });
   });
 });

@@ -10,6 +10,7 @@ import {
   registerAgent as registerAgentProcess,
   removeAgent as removeAgentProcess,
   updateAgentStatus as updateAgentProcessStatus,
+  updateAgentActivity,
 } from './services/agentRegistry.js';
 
 /**
@@ -75,6 +76,9 @@ export function updateAgentOutput(agentId, output) {
 
     // Broadcast agent:output event via WebSocket
     emitAgentOutput(agentId, output);
+
+    // Update agentRegistry activity for stuck detection (Story 4.6)
+    updateAgentActivity(agentId);
   }
 }
 

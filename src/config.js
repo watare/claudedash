@@ -33,6 +33,9 @@ export const defaultConfig = {
   // Story retry settings (Story 4.3)
   maxStoryRetries: 3,         // Maximum retry attempts before warning
 
+  // Stuck detection settings (Story 4.6)
+  stuckThresholdMinutes: 30,  // Minutes without output before marking agent as stuck
+
   // Git settings
   baseBranch: 'main',
   branchPrefix: 'feature/',

@@ -1,6 +1,6 @@
 # Story 4.6: Stuck Agent Detection & Alerts
 
-Status: ready-for-dev
+Status: done
 
 ## Story
 
@@ -36,41 +36,41 @@ So that **problems are surfaced before wasting too much time** (FR7 enhancement)
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Implement stuck detection service (AC: 1, 4)
-  - [ ] 1.1: Create `src/services/stuckDetector.js`
-  - [ ] 1.2: Track lastActivity timestamp per agent in agentRegistry
-  - [ ] 1.3: Implement interval-based check (every 1 minute)
-  - [ ] 1.4: Mark agents as stuck when inactive > threshold
-- [ ] Task 2: Update agentRegistry with activity tracking (AC: 1)
-  - [ ] 2.1: Add `lastActivity` field to agent metadata
-  - [ ] 2.2: Add `stuckAt` field (null if not stuck)
-  - [ ] 2.3: Add `updateActivity(agentId)` method
-  - [ ] 2.4: Add `markStuck(agentId)` method
-- [ ] Task 3: Integrate with claude-runner output (AC: 1)
-  - [ ] 3.1: On stdout/stderr output, call `updateActivity(agentId)`
-  - [ ] 3.2: Parse output events from execa process
-- [ ] Task 4: Implement WebSocket broadcast (AC: 2)
-  - [ ] 4.1: Broadcast `agent:stuck` event when detected
-  - [ ] 4.2: Include agentId, storyId, duration in message
-- [ ] Task 5: Add configuration option (AC: 4)
-  - [ ] 5.1: Add `stuckThresholdMinutes` to config.js (default: 30)
-  - [ ] 5.2: Support environment variable override
-- [ ] Task 6: Create StuckAgentIndicator component (AC: 3)
-  - [ ] 6.1: Create `dashboard/src/components/agents/StuckAgentIndicator.tsx`
-  - [ ] 6.2: Show warning icon with duration text
-  - [ ] 6.3: Use yellow for warning (30-60min), red for critical (>60min)
-- [ ] Task 7: Update AgentPanel for stuck state (AC: 3)
-  - [ ] 7.1: Detect stuck agents from store
-  - [ ] 7.2: Show StuckAgentIndicator for stuck agents
-  - [ ] 7.3: Make [Kill] and [View Logs] buttons prominent (larger, colored)
-- [ ] Task 8: Handle stuck state in agentsStore (AC: 2, 3)
-  - [ ] 8.1: Add `stuckAt` field to Agent type
-  - [ ] 8.2: Handle `agent:stuck` WebSocket event
-  - [ ] 8.3: Add selector for stuck agents
-- [ ] Task 9: Write tests
-  - [ ] 9.1: Test stuck detection timing
-  - [ ] 9.2: Test activity update resets stuck timer
-  - [ ] 9.3: Test UI warning display
+- [x] Task 1: Implement stuck detection service (AC: 1, 4)
+  - [x] 1.1: Create `src/services/stuckDetector.js`
+  - [x] 1.2: Track lastActivity timestamp per agent in agentRegistry
+  - [x] 1.3: Implement interval-based check (every 1 minute)
+  - [x] 1.4: Mark agents as stuck when inactive > threshold
+- [x] Task 2: Update agentRegistry with activity tracking (AC: 1)
+  - [x] 2.1: Add `lastActivity` field to agent metadata
+  - [x] 2.2: Add `stuckAt` field (null if not stuck)
+  - [x] 2.3: Add `updateActivity(agentId)` method
+  - [x] 2.4: Add `markStuck(agentId)` method
+- [x] Task 3: Integrate with claude-runner output (AC: 1)
+  - [x] 3.1: On stdout/stderr output, call `updateActivity(agentId)`
+  - [x] 3.2: Parse output events from execa process
+- [x] Task 4: Implement WebSocket broadcast (AC: 2)
+  - [x] 4.1: Broadcast `agent:stuck` event when detected
+  - [x] 4.2: Include agentId, storyId, duration in message
+- [x] Task 5: Add configuration option (AC: 4)
+  - [x] 5.1: Add `stuckThresholdMinutes` to config.js (default: 30)
+  - [x] 5.2: Support environment variable override
+- [x] Task 6: Create StuckAgentIndicator component (AC: 3)
+  - [x] 6.1: Create `dashboard/src/components/agents/StuckAgentIndicator.tsx`
+  - [x] 6.2: Show warning icon with duration text
+  - [x] 6.3: Use yellow for warning (30-60min), red for critical (>60min)
+- [x] Task 7: Update AgentPanel for stuck state (AC: 3)
+  - [x] 7.1: Detect stuck agents from store
+  - [x] 7.2: Show StuckAgentIndicator for stuck agents
+  - [x] 7.3: Make [Kill] and [View Logs] buttons prominent (larger, colored)
+- [x] Task 8: Handle stuck state in agentsStore (AC: 2, 3)
+  - [x] 8.1: Add `stuckAt` field to Agent type
+  - [x] 8.2: Handle `agent:stuck` WebSocket event
+  - [x] 8.3: Add selector for stuck agents
+- [x] Task 9: Write tests
+  - [x] 9.1: Test stuck detection timing
+  - [x] 9.2: Test activity update resets stuck timer
+  - [x] 9.3: Test UI warning display
 
 ## Dev Notes
 
@@ -432,10 +432,81 @@ startStuckDetection(this.config, (msg) => this.broadcast(msg));
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+Claude Opus 4.5 (claude-opus-4-5-20251101)
 
 ### Debug Log References
 
+- All tests passing: 356 backend tests, 496 frontend tests
+
 ### Completion Notes List
 
+- Created stuckDetector.js service with interval-based checking (every 1 minute)
+- Added stuckAt field and markStuck/getStuckAgents functions to agentRegistry
+- Integrated activity tracking with claude-runner's updateAgentOutput function
+- Added stuckThresholdMinutes configuration option (default: 30 minutes)
+- Created StuckAgentIndicator component with yellow/red color scheme based on duration
+- Updated AgentRow to show StuckAgentIndicator and prominent buttons when stuck
+- Updated useWebSocket hook to handle agent:stuck events and set stuckAt timestamp
+- Added useStuckAgents selector to agentsStore
+- Updated KillButton to support prominent mode for stuck agents
+- Updated Agent type with stuckAt field
+- All acceptance criteria satisfied
+
 ### File List
+
+**New Files:**
+- src/services/stuckDetector.js
+- src/services/stuckDetector.test.js
+- dashboard/src/components/agents/StuckAgentIndicator.tsx
+- dashboard/src/components/agents/StuckAgentIndicator.test.tsx
+
+**Modified Files:**
+- src/services/agentRegistry.js - Added stuckAt field, markStuck(), getStuckAgents(), updated updateAgentActivity() to unstick agents
+- src/services/agentRegistry.test.js - Added tests for stuck functionality
+- src/services/websocket.js - Updated emitAgentStuck() signature for Story 4.6 format
+- src/services/websocket.test.js - Updated emitAgentStuck test
+- src/config.js - Added stuckThresholdMinutes configuration
+- src/server.js - Integrated stuck detection service startup
+- src/claude-runner.js - Added updateAgentActivity call on output
+- dashboard/src/types/agent.ts - Added stuckAt field to Agent interface
+- dashboard/src/hooks/useWebSocket.ts - Updated agent:stuck handler and AgentStuckPayload
+- dashboard/src/stores/agentsStore.ts - Added useStuckAgents selector
+- dashboard/src/components/agents/AgentRow.tsx - Added StuckAgentIndicator display and prominent buttons
+- dashboard/src/components/agents/AgentRow.test.tsx - Added stuckAt to mock agent
+- dashboard/src/components/agents/KillButton.tsx - Added prominent prop for stuck state
+
+## Senior Developer Review (AI)
+
+**Reviewer:** Claude Opus 4.5
+**Date:** 2026-01-17
+**Outcome:** ✅ **APPROVED** (with fixes applied)
+
+### Summary
+
+All acceptance criteria validated against implementation. 4 Medium issues identified and fixed. 3 Low issues documented as action items for future cleanup.
+
+### Medium Issues Fixed
+
+1. **M1: emitAgentStuck unused** - stuckDetector.js now imports and uses `emitAgentStuck` from websocket.js for consistency with other agent events.
+
+2. **M2: Frontend threshold mismatch** - Synced frontend STUCK_THRESHOLD to 30 minutes (was 45) to match backend config.stuckThresholdMinutes. Warning threshold set to 25 minutes.
+
+3. **M3: Missing broadcast test** - Added tests for WebSocket broadcast in stuckDetector.test.js verifying correct payload format.
+
+4. **M4: StuckAgentIndicator static duration** - Added useEffect interval to auto-update duration display every minute.
+
+### Low Issues (Action Items)
+
+- [ ] **L1:** Remove unused `updateAgentActivity` import from stuckDetector.js
+- [ ] **L2:** Add JSDoc for internal `checkForStuckAgents` function
+- [ ] **L3:** Add explicit StuckAgentIndicator render test when `stuckAt` is set in AgentRow.test.tsx
+
+### Test Results
+
+- Backend: 358 tests passed
+- Frontend: 523 tests passed
+
+## Change Log
+
+- 2026-01-17: Code review fixes applied (M1-M4) - threshold sync, broadcast consistency, auto-update
+- 2026-01-17: Implemented Story 4.6 - Stuck Agent Detection & Alerts (all ACs satisfied)

@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ProjectCard } from './ProjectCard';
+import { ConfirmStopDialog } from './ConfirmStopDialog';
 import { useProjectsStore } from '@/stores/projectsStore';
 import { useUIStore } from '@/stores/uiStore';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -7,8 +9,11 @@ import { toast } from 'sonner';
 
 export function ProjectList() {
   const navigate = useNavigate();
-  const { projects, isLoading } = useProjectsStore();
+  const { projects, isLoading, startProject, stopProject, startingProjectId, stoppingProjectId } =
+    useProjectsStore();
   const { activeProjectId, setActiveProject } = useUIStore();
+  const [stopDialogOpen, setStopDialogOpen] = useState(false);
+  const [projectToStop, setProjectToStop] = useState<string | null>(null);
 
   const handleViewDetails = (projectId: string) => {
     setActiveProject(projectId);
@@ -27,6 +32,41 @@ export function ProjectList() {
     toast.info('Log viewer coming in Story 4.5', {
       description: `Viewing logs for project ${projectId}`,
     });
+  };
+
+  const handleStartWorkflow = async (projectId: string) => {
+    const result = await startProject(projectId);
+    if (result.success) {
+      toast.success('Workflow started', {
+        description: `Orchestration started for ${projectId}`,
+      });
+    } else {
+      toast.error('Failed to start workflow', {
+        description: result.error || 'Unknown error',
+      });
+    }
+  };
+
+  const handleStopWorkflow = (projectId: string) => {
+    setProjectToStop(projectId);
+    setStopDialogOpen(true);
+  };
+
+  const handleConfirmStop = async () => {
+    if (!projectToStop) return;
+
+    const result = await stopProject(projectToStop);
+    if (result.success) {
+      toast.info('Workflow stopped', {
+        description: `Orchestration stopped for ${projectToStop}`,
+      });
+    } else {
+      toast.error('Failed to stop workflow', {
+        description: result.error || 'Unknown error',
+      });
+    }
+    setStopDialogOpen(false);
+    setProjectToStop(null);
   };
 
   if (isLoading) {
@@ -56,21 +96,39 @@ export function ProjectList() {
     );
   }
 
+  const projectToStopName = projectToStop
+    ? projects.find((p) => p.id === projectToStop)?.name || projectToStop
+    : '';
+
   return (
-    <div
-      className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4 p-4"
-      data-testid="project-list"
-    >
-      {projects.map((project) => (
-        <ProjectCard
-          key={project.id}
-          project={project}
-          isActive={project.id === activeProjectId}
-          onViewDetails={handleViewDetails}
-          onViewLogs={handleViewLogs}
-          onApprove={handleApprove}
-        />
-      ))}
-    </div>
+    <>
+      <div
+        className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4 p-4"
+        data-testid="project-list"
+      >
+        {projects.map((project) => (
+          <ProjectCard
+            key={project.id}
+            project={project}
+            isActive={project.id === activeProjectId}
+            isStarting={startingProjectId === project.id}
+            isStopping={stoppingProjectId === project.id}
+            onViewDetails={handleViewDetails}
+            onViewLogs={handleViewLogs}
+            onApprove={handleApprove}
+            onStartWorkflow={handleStartWorkflow}
+            onStopWorkflow={handleStopWorkflow}
+          />
+        ))}
+      </div>
+
+      <ConfirmStopDialog
+        open={stopDialogOpen}
+        onOpenChange={setStopDialogOpen}
+        projectName={projectToStopName}
+        onConfirm={handleConfirmStop}
+        isStopping={stoppingProjectId === projectToStop}
+      />
+    </>
   );
 }

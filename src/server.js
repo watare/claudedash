@@ -12,13 +12,16 @@ import { loadConfig, validateConfig, sanitizeForLogging } from './config.js';
 import { parseEpicsFile, parseSprintStatus, buildExecutionPlan } from './parser.js';
 import { Orchestrator } from './orchestrator.js';
 import { initDb } from './db/index.js';
-import { authRoutes, deleteExpiredSessions } from './auth/index.js';
+import { authRoutes, deleteExpiredSessions, requireAuth } from './auth/index.js';
+import { logAction } from './auth/audit.js';
 import { verifyToken } from './auth/jwt.js';
 import projectsRouter from './api/projects.js';
 import agentsRouter from './api/agents.js';
 import auditLogsRouter from './api/logs.js';
 import storiesRouter from './api/stories.js';
+import historyRouter from './api/history.js';
 import { setAuthenticatedClients, broadcast } from './services/websocket.js';
+import { startStuckDetection, stopStuckDetection } from './services/stuckDetector.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -95,6 +98,8 @@ class DashboardServer {
       initDb();
       // Start session cleanup on startup and every hour
       this.startSessionCleanup();
+      // Start stuck agent detection (Story 4.6)
+      this.startStuckDetection();
     } catch (error) {
       console.error('Failed to initialize database:', error.message);
       throw error;
@@ -114,6 +119,15 @@ class DashboardServer {
         console.log(`Cleaned up ${cleaned} expired sessions`);
       }
     }, 60 * 60 * 1000); // 1 hour
+  }
+
+  startStuckDetection() {
+    // Start stuck agent detection service (Story 4.6)
+    startStuckDetection(this.config, broadcast);
+  }
+
+  stopStuckDetection() {
+    stopStuckDetection();
   }
 
   setupServer() {
@@ -137,6 +151,7 @@ class DashboardServer {
     this.app.use('/api/agents', agentsRouter);
     this.app.use('/api/audit-logs', auditLogsRouter);
     this.app.use('/api/stories', storiesRouter);
+    this.app.use('/api/history', historyRouter);
 
     // Initialize authenticated clients for broadcast service
     setAuthenticatedClients(this.authenticatedClients);
@@ -253,13 +268,28 @@ class DashboardServer {
       }
     });
 
-    // Get logs
+    // Get logs with optional filtering by agentId and level
     this.app.get('/api/logs', (req, res) => {
       const limit = parseInt(req.query.limit) || 200;
       const offset = parseInt(req.query.offset) || 0;
+      const agentId = req.query.agentId || null;
+      const level = req.query.level || null;
+
+      let filteredLogs = this.logs;
+
+      // Filter by agentId if provided (or return orchestrator logs if agentId is 'orchestrator')
+      if (agentId && agentId !== 'orchestrator') {
+        filteredLogs = filteredLogs.filter(log => log.agentId === agentId);
+      }
+
+      // Filter by level if provided
+      if (level) {
+        filteredLogs = filteredLogs.filter(log => log.level === level);
+      }
+
       res.json({
-        logs: this.logs.slice(offset, offset + limit),
-        total: this.logs.length,
+        logs: filteredLogs.slice(offset, offset + limit),
+        total: filteredLogs.length,
       });
     });
 
@@ -331,6 +361,101 @@ class DashboardServer {
       this.logs = [];
       this.addLog('Logs cleared');
       res.json({ message: 'Logs cleared' });
+    });
+
+    // Start orchestration for a specific project
+    // Story: Workflow Launch Button - Per-project orchestration trigger
+    this.app.post('/api/projects/:id/start', requireAuth, async (req, res) => {
+      const { id } = req.params;
+
+      // Validate project exists (currently single-project, just verify ID matches)
+      const projectName = this.projectRoot.split('/').pop();
+      if (id !== projectName) {
+        return res.status(404).json({
+          error: 'Project not found',
+          code: 'PROJECT_NOT_FOUND',
+          details: { requestedId: id, availableProjects: [projectName] },
+        });
+      }
+
+      if (this.isRunning) {
+        return res.status(400).json({
+          error: 'Orchestration already running',
+          code: 'ALREADY_RUNNING',
+          details: { currentStatus: this.state?.status || 'running' },
+        });
+      }
+
+      // Validate and sanitize options
+      const rawOptions = req.body || {};
+      const allowedOptions = ['batchSize', 'epicFilter', 'storyFilter', 'dryRun'];
+      const options = {};
+      for (const key of allowedOptions) {
+        if (rawOptions[key] !== undefined) {
+          options[key] = rawOptions[key];
+        }
+      }
+
+      // Audit log the action
+      const username = req.user?.username || req.user?.email || 'unknown';
+      logAction(username, 'project:start', id, { options });
+
+      this.addLog(`Start requested for project ${id} by ${username}`);
+
+      res.json({
+        data: {
+          projectId: id,
+          status: 'starting',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
+      });
+
+      // Run in background
+      setImmediate(() => this.startOrchestration(options));
+    });
+
+    // Stop orchestration for a specific project
+    this.app.post('/api/projects/:id/stop', requireAuth, (req, res) => {
+      const { id } = req.params;
+
+      const projectName = this.projectRoot.split('/').pop();
+      if (id !== projectName) {
+        return res.status(404).json({
+          error: 'Project not found',
+          code: 'PROJECT_NOT_FOUND',
+          details: { requestedId: id, availableProjects: [projectName] },
+        });
+      }
+
+      if (!this.isRunning) {
+        return res.status(400).json({
+          error: 'Orchestration not running',
+          code: 'NOT_RUNNING',
+          details: { currentStatus: this.state?.status || 'idle' },
+        });
+      }
+
+      // Audit log the action
+      const username = req.user?.username || req.user?.email || 'unknown';
+      logAction(username, 'project:stop', id, {});
+
+      this.isRunning = false;
+      this.state.status = 'stopped';
+      this.state.endTime = new Date().toISOString();
+      this.broadcast({ type: 'state', data: this.state });
+      this.addLog(`Orchestration stopped for project ${id} by ${username}`);
+
+      res.json({
+        data: {
+          projectId: id,
+          status: 'stopped',
+        },
+        meta: {
+          timestamp: new Date().toISOString(),
+        },
+      });
     });
 
     // Serve dashboard (catch-all)
@@ -576,11 +701,19 @@ class DashboardServer {
     this.broadcast({ type: 'state', data: this.state });
   }
 
-  addLog(message) {
+  /**
+   * Add a log entry with optional level and agentId for filtering
+   * @param {string} message - Log message
+   * @param {'error' | 'warn' | 'info' | 'debug'} [level='info'] - Log level
+   * @param {string | null} [agentId=null] - Associated agent ID
+   */
+  addLog(message, level = 'info', agentId = null) {
     const entry = {
       id: this.logs.length,
       time: new Date().toISOString(),
       message,
+      level,
+      agentId,
     };
     this.logs.push(entry);
     if (this.logs.length > this.maxLogs) {

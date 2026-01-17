@@ -76,9 +76,9 @@ development_status:
   4-2-kill-agent-dashboard-button: done
   4-3-retry-story-api-backend: done
   4-4-retry-story-dashboard-button: done
-  4-5-log-viewer-panel: review
-  4-6-stuck-agent-detection-alerts: ready-for-dev
-  4-7-execution-history-view: ready-for-dev
+  4-5-log-viewer-panel: done
+  4-6-stuck-agent-detection-alerts: done
+  4-7-execution-history-view: in-progress
   epic-4-retrospective: optional
 
   # Epic 5: Notifications & Alerts
