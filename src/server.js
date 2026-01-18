@@ -23,6 +23,7 @@ import storiesRouter from './api/stories.js';
 import historyRouter from './api/history.js';
 import { setAuthenticatedClients, broadcast } from './services/websocket.js';
 import { startStuckDetection, stopStuckDetection } from './services/stuckDetector.js';
+import { getAgentById } from './claude-runner.js';
 import {
   startRun,
   recordEvent,
@@ -309,11 +310,27 @@ class DashboardServer {
       const agentId = req.query.agentId || null;
       const level = req.query.level || null;
 
-      let filteredLogs = this.logs;
+      let filteredLogs = [];
 
-      // Filter by agentId if provided (or return orchestrator logs if agentId is 'orchestrator')
+      // If agentId is provided, get logs from agent's outputHistory
       if (agentId && agentId !== 'orchestrator') {
-        filteredLogs = filteredLogs.filter(log => log.agentId === agentId);
+        const agent = getAgentById(agentId);
+        if (agent && agent.outputHistory) {
+          // Convert outputHistory to log format
+          filteredLogs = agent.outputHistory.map((message, index) => ({
+            id: index,
+            time: agent.lastActivity || new Date().toISOString(),
+            message,
+            level: 'info',
+            agentId,
+          }));
+        }
+        // Also include any server-side logs for this agent
+        const serverLogs = this.logs.filter(log => log.agentId === agentId);
+        filteredLogs = [...filteredLogs, ...serverLogs];
+      } else {
+        // Return orchestrator/server logs
+        filteredLogs = this.logs;
       }
 
       // Filter by level if provided
