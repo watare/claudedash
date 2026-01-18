@@ -18,7 +18,7 @@ import {
 export const defaultConfig = {
   // Parallelism settings
   epicBatchSize: 2,           // Run epics in batches (e.g., 2 = Epic 1+2, then 3+4)
-  maxParallelStories: 4,      // How many stories per epic at once
+  maxParallelStories: 1,      // Sequential stories within project (parallel is for independent projects)
   continueOnEpicFailure: false, // Continue to next batch if epic fails
 
   // Claude Code settings
@@ -34,7 +34,7 @@ export const defaultConfig = {
   maxStoryRetries: 3,         // Maximum retry attempts before warning
 
   // Stuck detection settings (Story 4.6)
-  stuckThresholdMinutes: 30,  // Minutes without output before marking agent as stuck
+  stuckThresholdMinutes: 5,   // Minutes without activity before marking agent as stuck
 
   // Git settings
   baseBranch: 'main',
