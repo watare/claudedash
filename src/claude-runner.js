@@ -22,6 +22,27 @@ import {
   isSupervisorAvailable,
 } from './services/supervisorAI.js';
 
+// Supervisor AI timeout - configurable via env, fallback to 30s
+const SUPERVISOR_TIMEOUT_MS = parseInt(process.env.SUPERVISOR_TIMEOUT_MS, 10) || 30000;
+
+/**
+ * Timeout wrapper helper - races a promise against a timeout
+ * @param {Promise} promise - The promise to wrap
+ * @param {number} ms - Timeout in milliseconds
+ * @param {string} errorMsg - Error message on timeout
+ * @returns {Promise} - Resolves with promise result or rejects with timeout error
+ */
+export function withTimeout(promise, ms, errorMsg) {
+  let timeoutId;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(errorMsg)), ms);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    clearTimeout(timeoutId);
+  });
+}
+
 /**
  * Question patterns for automatic response
  * Claude may ask questions during workflows - we auto-respond to keep automation flowing
@@ -239,17 +260,29 @@ export async function runClaude(prompt, options = {}) {
     });
   }
 
+  console.log(`[AGENT-${agentId}] STARTING: story=${storyId}, cwd=${cwd}`);
+
   try {
     // Use PTY for interactive handling - Claude may ask questions we need to answer
-    const ptyProcess = pty.spawn(command, args, {
-      name: 'xterm-256color',
-      cols: 120,
-      rows: 40,
-      cwd,
-      env: process.env,
-    });
+    let ptyProcess;
+    try {
+      ptyProcess = pty.spawn(command, args, {
+        name: 'xterm-256color',
+        cols: 120,
+        rows: 40,
+        cwd,
+        env: process.env,
+      });
+    } catch (spawnError) {
+      console.error(`[AGENT-${agentId}] PTY SPAWN FAILED: ${spawnError.message}`);
+      if (agentId) {
+        updateAgentOutput(agentId, `PTY spawn failed: ${spawnError.message}`);
+        completeAgent(agentId, false);
+      }
+      throw spawnError;
+    }
 
-    console.log(`[PTY] Agent ${agentId}: PID=${ptyProcess.pid}, interactive mode enabled`);
+    console.log(`[AGENT-${agentId}] PTY SPAWNED: PID=${ptyProcess.pid}, command=${command} ${args.join(' ')}`);
 
     // Register process with agentRegistry for kill functionality (Story 4.1)
     if (agentId && ptyProcess.pid) {
@@ -287,91 +320,119 @@ export async function runClaude(prompt, options = {}) {
 
     // Process output and handle questions
     ptyProcess.onData((data) => {
-      accumulatedOutput += data;
-      outputBuffer += data;
+      try {
+        console.log(`[AGENT-${agentId}] DATA: ${data.length} bytes`);
+        accumulatedOutput += data;
+        outputBuffer += data;
 
-      // Keep buffer manageable
-      if (outputBuffer.length > 1000) {
-        outputBuffer = outputBuffer.slice(-500);
-      }
+        // Keep buffer manageable
+        if (outputBuffer.length > 1000) {
+          outputBuffer = outputBuffer.slice(-500);
+        }
 
-      // Update agent activity
-      if (agentId) {
-        updateAgentOutput(agentId, data.slice(-200));
-        updateAgentActivity(agentId);
-      }
+        // Update agent activity
+        if (agentId) {
+          updateAgentOutput(agentId, data.slice(-200));
+          updateAgentActivity(agentId);
+          console.log(`[AGENT-${agentId}] BROADCAST: emitAgentOutput called`);
+        }
 
-      // Skip question handling if we're waiting for AI response
-      if (waitingForAI) return;
+        // Skip question handling if we're waiting for AI response
+        if (waitingForAI) return;
 
-      // Check if output contains a question (ends with ?)
-      const hasQuestion = /\?\s*$/.test(outputBuffer.trim());
-      if (!hasQuestion) return;
+        // Check if output contains a question (ends with ?)
+        const hasQuestion = /\?\s*$/.test(outputBuffer.trim());
+        if (!hasQuestion) return;
 
-      // Check if this is a complex question that needs Supervisor AI
-      if (isSupervisorAvailable() && isComplexQuestion(outputBuffer)) {
-        waitingForAI = true;
-        console.log(`[PTY] Agent ${agentId}: Complex question detected, consulting Supervisor AI...`);
+        // Check if this is a complex question that needs Supervisor AI
+        if (isSupervisorAvailable() && isComplexQuestion(outputBuffer)) {
+          console.log(`[AGENT-${agentId}] waitingForAI: true - calling Supervisor AI`);
+          waitingForAI = true;
 
-        // Handle async AI response
-        answerAgentQuestion(outputBuffer, {
-          projectId: projectId || cwd.split('/').pop(),
-          storyId,
-          phase: 'implementation',
-          recentOutput: accumulatedOutput.slice(-1000),
-        }).then((result) => {
-          waitingForAI = false;
-          if (result && result.answer) {
-            const simpleAnswer = extractSimpleAnswer(result.answer);
-            questionCount++;
-            console.log(`[PTY] Agent ${agentId}: Supervisor AI answer: "${simpleAnswer.slice(0, 100)}..."`);
-            ptyProcess.write(simpleAnswer + '\n');
+          // Handle async AI response with timeout and guaranteed flag reset
+          (async () => {
+            try {
+              const result = await withTimeout(
+                answerAgentQuestion(outputBuffer, {
+                  projectId: projectId || cwd.split('/').pop(),
+                  storyId,
+                  phase: 'implementation',
+                  recentOutput: accumulatedOutput.slice(-1000),
+                }),
+                SUPERVISOR_TIMEOUT_MS,
+                'Supervisor AI timeout'
+              );
+
+              if (result && result.answer) {
+                const simpleAnswer = extractSimpleAnswer(result.answer);
+                questionCount++;
+                console.log(`[PTY] Agent ${agentId}: Supervisor AI answer: "${simpleAnswer.slice(0, 100)}..."`);
+                // Only write if process hasn't exited
+                if (!resolved) {
+                  ptyProcess.write(simpleAnswer + '\n');
+                }
+                outputBuffer = '';
+              } else {
+                // Fallback to simple patterns if AI returns no answer
+                console.log(`[PTY] Agent ${agentId}: Supervisor AI unavailable, falling back to simple patterns`);
+                handleSimpleQuestion();
+              }
+            } catch (err) {
+              console.error(`[AGENT-${agentId}] Supervisor AI error: ${err.message}`);
+              // Fallback to default answer on timeout/error - only write if process hasn't exited
+              if (!resolved) {
+                ptyProcess.write('yes\n');
+              }
+              outputBuffer = '';
+            } finally {
+              waitingForAI = false;  // ALWAYS reset, even on error
+              console.log(`[AGENT-${agentId}] waitingForAI: false - Supervisor AI completed`);
+            }
+          })();
+          return;
+        }
+
+        // Handle simple questions with regex patterns
+        handleSimpleQuestion();
+
+        function handleSimpleQuestion() {
+          // Check for questions that need automatic response
+          for (const pattern of QUESTION_PATTERNS) {
+            if (pattern.regex.test(outputBuffer)) {
+              questionCount++;
+              console.log(`[PTY] Agent ${agentId}: Auto-answering "${pattern.desc}" with "${pattern.response}"`);
+              ptyProcess.write(pattern.response + '\n');
+              outputBuffer = '';  // Clear buffer after answering
+              return;
+            }
+          }
+
+          // Check for story ID mismatch (dynamic pattern)
+          const storyMatch = outputBuffer.match(/(?:story |epic )?(\d+-\d+)/i);
+          if (storyMatch && storyId && storyMatch[1] !== storyId) {
+            // Wrong story mentioned - correct it
+            console.log(`[PTY] Agent ${agentId}: Correcting story ID from ${storyMatch[1]} to ${storyId}`);
+            ptyProcess.write(`no, please work on story ${storyId}\n`);
             outputBuffer = '';
-          } else {
-            // Fallback to simple patterns if AI fails
-            console.log(`[PTY] Agent ${agentId}: Supervisor AI unavailable, falling back to simple patterns`);
-            handleSimpleQuestion();
-          }
-        }).catch((err) => {
-          waitingForAI = false;
-          console.error(`[PTY] Agent ${agentId}: Supervisor AI error: ${err.message}`);
-          handleSimpleQuestion();
-        });
-        return;
-      }
-
-      // Handle simple questions with regex patterns
-      handleSimpleQuestion();
-
-      function handleSimpleQuestion() {
-        // Check for questions that need automatic response
-        for (const pattern of QUESTION_PATTERNS) {
-          if (pattern.regex.test(outputBuffer)) {
-            questionCount++;
-            console.log(`[PTY] Agent ${agentId}: Auto-answering "${pattern.desc}" with "${pattern.response}"`);
-            ptyProcess.write(pattern.response + '\n');
-            outputBuffer = '';  // Clear buffer after answering
-            return;
           }
         }
-
-        // Check for story ID mismatch (dynamic pattern)
-        const storyMatch = outputBuffer.match(/(?:story |epic )?(\d+-\d+)/i);
-        if (storyMatch && storyId && storyMatch[1] !== storyId) {
-          // Wrong story mentioned - correct it
-          console.log(`[PTY] Agent ${agentId}: Correcting story ID from ${storyMatch[1]} to ${storyId}`);
-          ptyProcess.write(`no, please work on story ${storyId}\n`);
-          outputBuffer = '';
-        }
+      } catch (dataError) {
+        console.error(`[AGENT-${agentId}] onData ERROR: ${dataError.message}`);
       }
     });
 
     // Wait for process to complete
+    console.log(`[AGENT-${agentId}] WAITING for exit...`);
     const exitCode = await new Promise((resolve) => {
-      ptyProcess.onExit(({ exitCode: code }) => {
+      ptyProcess.onExit(({ exitCode: code, signal }) => {
+        console.log(`[AGENT-${agentId}] EXIT: code=${code}, signal=${signal}`);
         if (timeoutId) clearTimeout(timeoutId);
         if (!resolved) {
           resolved = true;
+          // If process was killed by signal and code is -1, it's an error
+          if (code === -1 && signal) {
+            console.error(`[AGENT-${agentId}] PTY process killed by signal: ${signal}`);
+          }
           resolve(code ?? 0);
         }
       });

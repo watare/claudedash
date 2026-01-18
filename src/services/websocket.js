@@ -73,6 +73,7 @@ export function broadcastToUser(userId, type, data) {
  * @param {{ id: string, projectId: string, storyId: string, storyTitle: string }} agent
  */
 export function emitAgentSpawn(agent) {
+  console.log(`[WS] emitAgentSpawn: ${agent.id}`);
   broadcast('agent:spawn', {
     agentId: agent.id,
     projectId: agent.projectId,
@@ -87,6 +88,7 @@ export function emitAgentSpawn(agent) {
  * @param {string} output - Output text
  */
 export function emitAgentOutput(agentId, output) {
+  console.log(`[WS] emitAgentOutput: ${agentId}, ${output.length} bytes`);
   // Note: broadcast() already adds a timestamp to the message envelope
   broadcast('agent:output', {
     agentId,
@@ -100,6 +102,7 @@ export function emitAgentOutput(agentId, output) {
  * @param {'success' | 'failed'} result
  */
 export function emitAgentComplete(agent, result) {
+  console.log(`[WS] emitAgentComplete: ${agent.id}, status=${result}`);
   broadcast('agent:complete', {
     agentId: agent.id,
     projectId: agent.projectId,
