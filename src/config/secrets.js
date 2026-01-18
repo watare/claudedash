@@ -182,6 +182,15 @@ export function getNotificationConfig() {
 }
 
 /**
+ * Get Anthropic API key for Supervisor AI (if configured)
+ * @returns {string | null} API key or null if not configured
+ */
+export function getAnthropicApiKey() {
+  const secrets = loadSecrets();
+  return secrets.anthropic?.api_key || null;
+}
+
+/**
  * Sanitize an object for safe logging by redacting sensitive values
  * @param {any} obj - Object to sanitize
  * @returns {any} Sanitized copy of the object

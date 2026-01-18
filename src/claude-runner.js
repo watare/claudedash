@@ -1,4 +1,6 @@
 import { execa } from 'execa';
+import { spawn } from 'child_process';
+import * as pty from 'node-pty';
 import fs from 'fs';
 import path from 'path';
 import {
@@ -12,6 +14,32 @@ import {
   updateAgentStatus as updateAgentProcessStatus,
   updateAgentActivity,
 } from './services/agentRegistry.js';
+import { startWatching, stopWatching } from './services/fileWatcher.js';
+import {
+  isComplexQuestion,
+  answerAgentQuestion,
+  extractSimpleAnswer,
+  isSupervisorAvailable,
+} from './services/supervisorAI.js';
+
+/**
+ * Question patterns for automatic response
+ * Claude may ask questions during workflows - we auto-respond to keep automation flowing
+ */
+const QUESTION_PATTERNS = [
+  { regex: /(?:is this|this is) (?:the )?(?:correct |right )?story/i, response: 'yes', desc: 'Story confirmation' },
+  { regex: /(?:do you want|should I|would you like) (?:me to )?review/i, response: 'yes', desc: 'Review confirmation' },
+  { regex: /(?:do you want|should I|would you like) (?:me to )?(?:fix|correct|update)/i, response: 'yes', desc: 'Fix confirmation' },
+  { regex: /(?:do you want|should I|would you like) (?:me to )?(?:continue|proceed)/i, response: 'yes', desc: 'Continue confirmation' },
+  { regex: /(?:do you want|should I|would you like) (?:me to )?(?:save|commit|push)/i, response: 'yes', desc: 'Save confirmation' },
+  { regex: /(?:do you want|should I|would you like) (?:me to )?(?:track|record|log)/i, response: 'yes', desc: 'Track confirmation' },
+  { regex: /\?\s*\(y\/n\)/i, response: 'y', desc: 'Y/N prompt' },
+  { regex: /\?\s*\[Y\/n\]/i, response: 'Y', desc: 'Y/n prompt' },
+  { regex: /\?\s*\[y\/N\]/i, response: 'y', desc: 'y/N prompt' },
+  { regex: /(?:overwrite|replace) (?:this |the )?file/i, response: 'yes', desc: 'Overwrite confirmation' },
+  { regex: /press (?:enter|return) to (?:continue|proceed)/i, response: '\n', desc: 'Press enter' },
+  { regex: /(?:select|choose) (?:an? )?option/i, response: '1', desc: 'Select option' },
+];
 
 /**
  * Active agent tracking
@@ -212,57 +240,161 @@ export async function runClaude(prompt, options = {}) {
   }
 
   try {
-    // Start the subprocess (don't await yet to get handle for kill functionality)
-    const subprocess = execa(command, args, {
+    // Use PTY for interactive handling - Claude may ask questions we need to answer
+    const ptyProcess = pty.spawn(command, args, {
+      name: 'xterm-256color',
+      cols: 120,
+      rows: 40,
       cwd,
-      timeout,
-      reject: false,  // Don't throw on non-zero exit
-      all: true,      // Combine stdout and stderr
+      env: process.env,
     });
 
-    // Register subprocess with agentRegistry for kill functionality (Story 4.1)
-    if (agentId && subprocess.pid) {
-      registerAgentProcess(agentId, subprocess, {
+    console.log(`[PTY] Agent ${agentId}: PID=${ptyProcess.pid}, interactive mode enabled`);
+
+    // Register process with agentRegistry for kill functionality (Story 4.1)
+    if (agentId && ptyProcess.pid) {
+      // Create a subprocess-like object for compatibility
+      const processHandle = {
+        pid: ptyProcess.pid,
+        kill: (signal) => ptyProcess.kill(signal),
+      };
+      registerAgentProcess(agentId, processHandle, {
         storyId,
         projectId: projectId || cwd.split('/').pop(),
       });
+
+      // Start file watching for activity detection
+      startWatching(agentId, cwd);
     }
 
-    // Stream output to track activity in real-time (for stuck detection)
-    // Use 'all' stream when available (combined stdout+stderr), fallback to individual streams
-    if (agentId) {
-      const outputStream = subprocess.all || subprocess.stdout;
-      if (outputStream) {
-        outputStream.on('data', (chunk) => {
-          updateAgentOutput(agentId, chunk.toString().slice(-200));
-        });
-      }
-      if (!subprocess.all && subprocess.stderr) {
-        subprocess.stderr.on('data', (chunk) => {
-          updateAgentOutput(agentId, chunk.toString().slice(-200));
-        });
-      }
+    // Accumulate output
+    let accumulatedOutput = '';
+    let outputBuffer = '';  // Buffer for question detection
+    let timeoutId = null;
+    let questionCount = 0;
+    let resolved = false;
+
+    // Set up timeout
+    if (timeout > 0) {
+      timeoutId = setTimeout(() => {
+        console.log(`[PTY] Agent ${agentId}: Timeout after ${timeout}ms`);
+        try { ptyProcess.kill(); } catch (e) {}
+      }, timeout);
     }
 
-    // Now await the result
-    const result = await subprocess;
+    // Track if we're waiting for AI response to prevent duplicate answers
+    let waitingForAI = false;
+
+    // Process output and handle questions
+    ptyProcess.onData((data) => {
+      accumulatedOutput += data;
+      outputBuffer += data;
+
+      // Keep buffer manageable
+      if (outputBuffer.length > 1000) {
+        outputBuffer = outputBuffer.slice(-500);
+      }
+
+      // Update agent activity
+      if (agentId) {
+        updateAgentOutput(agentId, data.slice(-200));
+        updateAgentActivity(agentId);
+      }
+
+      // Skip question handling if we're waiting for AI response
+      if (waitingForAI) return;
+
+      // Check if output contains a question (ends with ?)
+      const hasQuestion = /\?\s*$/.test(outputBuffer.trim());
+      if (!hasQuestion) return;
+
+      // Check if this is a complex question that needs Supervisor AI
+      if (isSupervisorAvailable() && isComplexQuestion(outputBuffer)) {
+        waitingForAI = true;
+        console.log(`[PTY] Agent ${agentId}: Complex question detected, consulting Supervisor AI...`);
+
+        // Handle async AI response
+        answerAgentQuestion(outputBuffer, {
+          projectId: projectId || cwd.split('/').pop(),
+          storyId,
+          phase: 'implementation',
+          recentOutput: accumulatedOutput.slice(-1000),
+        }).then((result) => {
+          waitingForAI = false;
+          if (result && result.answer) {
+            const simpleAnswer = extractSimpleAnswer(result.answer);
+            questionCount++;
+            console.log(`[PTY] Agent ${agentId}: Supervisor AI answer: "${simpleAnswer.slice(0, 100)}..."`);
+            ptyProcess.write(simpleAnswer + '\n');
+            outputBuffer = '';
+          } else {
+            // Fallback to simple patterns if AI fails
+            console.log(`[PTY] Agent ${agentId}: Supervisor AI unavailable, falling back to simple patterns`);
+            handleSimpleQuestion();
+          }
+        }).catch((err) => {
+          waitingForAI = false;
+          console.error(`[PTY] Agent ${agentId}: Supervisor AI error: ${err.message}`);
+          handleSimpleQuestion();
+        });
+        return;
+      }
+
+      // Handle simple questions with regex patterns
+      handleSimpleQuestion();
+
+      function handleSimpleQuestion() {
+        // Check for questions that need automatic response
+        for (const pattern of QUESTION_PATTERNS) {
+          if (pattern.regex.test(outputBuffer)) {
+            questionCount++;
+            console.log(`[PTY] Agent ${agentId}: Auto-answering "${pattern.desc}" with "${pattern.response}"`);
+            ptyProcess.write(pattern.response + '\n');
+            outputBuffer = '';  // Clear buffer after answering
+            return;
+          }
+        }
+
+        // Check for story ID mismatch (dynamic pattern)
+        const storyMatch = outputBuffer.match(/(?:story |epic )?(\d+-\d+)/i);
+        if (storyMatch && storyId && storyMatch[1] !== storyId) {
+          // Wrong story mentioned - correct it
+          console.log(`[PTY] Agent ${agentId}: Correcting story ID from ${storyMatch[1]} to ${storyId}`);
+          ptyProcess.write(`no, please work on story ${storyId}\n`);
+          outputBuffer = '';
+        }
+      }
+    });
+
+    // Wait for process to complete
+    const exitCode = await new Promise((resolve) => {
+      ptyProcess.onExit(({ exitCode: code }) => {
+        if (timeoutId) clearTimeout(timeoutId);
+        if (!resolved) {
+          resolved = true;
+          resolve(code ?? 0);
+        }
+      });
+    });
 
     const duration = Date.now() - startTime;
 
     const output = {
-      success: result.exitCode === 0,
-      exitCode: result.exitCode,
-      output: result.all || result.stdout || '',
-      stderr: result.stderr || '',
+      success: exitCode === 0,
+      exitCode,
+      output: accumulatedOutput,
+      stderr: '',
       duration,
       command: `${command} ${args.join(' ')}`,
-      agentId,  // Include agent ID in result for reference
+      agentId,
+      questionCount,
     };
 
     // Update agent with final output and mark complete
     if (agentId) {
-      updateAgentOutput(agentId, output.output.slice(-500));  // Last 500 chars
       completeAgent(agentId, output.success);
+      // Stop file watching
+      stopWatching(agentId);
       // Remove from process registry on natural exit (Story 4.1)
       removeAgentProcess(agentId);
     }
@@ -275,7 +407,7 @@ TIME: ${new Date().toISOString()}
 CWD: ${cwd}
 PROMPT: ${prompt.substring(0, 500)}${prompt.length > 500 ? '...' : ''}
 DURATION: ${duration}ms
-EXIT CODE: ${result.exitCode}
+EXIT CODE: ${exitCode}
 AGENT ID: ${agentId || 'N/A'}
 ================================================================================
 ${output.output}
@@ -291,6 +423,8 @@ ${output.output}
     if (agentId) {
       updateAgentOutput(agentId, `Error: ${error.message}`);
       completeAgent(agentId, false);
+      // Stop file watching
+      stopWatching(agentId);
       // Remove from process registry on error (Story 4.1)
       removeAgentProcess(agentId);
     }

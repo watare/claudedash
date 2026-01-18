@@ -311,11 +311,17 @@ export async function getAllProjects() {
         // Ignore errors, default to 0
       }
 
+      // Derive status - but if no agents running, can't be 'running'
+      let status = deriveProjectStatus(sprintStatus);
+      if (status === 'running' && agentCount === 0) {
+        status = 'idle'; // No actual agents = not really running
+      }
+
       projects.push({
         id: entry.name,
         name: entry.name,
         path: projectPath,
-        status: deriveProjectStatus(sprintStatus),
+        status,
         currentEpic,
         currentStory,
         agentCount,
@@ -339,11 +345,17 @@ export async function getAllProjects() {
       // Ignore errors, default to 0
     }
 
+    // Derive status - but if no agents running, can't be 'running'
+    let status = deriveProjectStatus(sprintStatus);
+    if (status === 'running' && agentCount === 0) {
+      status = 'idle'; // No actual agents = not really running
+    }
+
     projects.push({
       id: projectName,
       name: projectName,
       path: currentDir,
-      status: deriveProjectStatus(sprintStatus),
+      status,
       currentEpic,
       currentStory,
       agentCount,

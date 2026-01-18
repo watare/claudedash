@@ -35,14 +35,21 @@ export function ProjectList() {
   };
 
   const handleStartWorkflow = async (projectId: string) => {
-    const result = await startProject(projectId);
-    if (result.success) {
-      toast.success('Workflow started', {
-        description: `Orchestration started for ${projectId}`,
-      });
-    } else {
+    try {
+      const result = await startProject(projectId);
+      if (result.success) {
+        toast.success('Workflow started', {
+          description: `Orchestration started for ${projectId}`,
+        });
+      } else {
+        toast.error('Failed to start workflow', {
+          description: result.error || 'Unknown error',
+        });
+      }
+    } catch (err) {
+      console.error('Start workflow error:', err);
       toast.error('Failed to start workflow', {
-        description: result.error || 'Unknown error',
+        description: err instanceof Error ? err.message : 'Unexpected error',
       });
     }
   };
