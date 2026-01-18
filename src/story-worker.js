@@ -139,8 +139,13 @@ export class StoryWorker {
   async createBranch() {
     const cwd = this.config.projectRoot;
 
-    // Fetch latest
-    await execa('git', ['fetch', 'origin'], { cwd });
+    // Fetch latest (skip if no remote configured)
+    try {
+      await execa('git', ['fetch', 'origin'], { cwd });
+    } catch (e) {
+      // No remote origin - that's fine for local-only repos
+      this.log(`  [${this.story.id}] No remote origin, skipping fetch`);
+    }
 
     // Check if branch already exists
     const { stdout: branches } = await execa('git', ['branch', '-a'], { cwd });
@@ -151,9 +156,29 @@ export class StoryWorker {
       await execa('git', ['checkout', this.branch], { cwd });
       this.log(`  [${this.story.id}] Checked out existing branch: ${this.branch}`);
     } else {
-      // Create new branch from base
-      await execa('git', ['checkout', this.config.baseBranch], { cwd });
-      await execa('git', ['pull', 'origin', this.config.baseBranch], { cwd });
+      // Create new branch from base - detect actual base branch
+      let baseBranch = this.config.baseBranch;
+      try {
+        await execa('git', ['checkout', baseBranch], { cwd });
+      } catch (e) {
+        // Try common alternatives
+        const alternatives = ['main', 'master', 'develop'];
+        for (const alt of alternatives) {
+          try {
+            await execa('git', ['checkout', alt], { cwd });
+            baseBranch = alt;
+            break;
+          } catch (e2) {
+            // Try next
+          }
+        }
+      }
+      // Pull if remote exists
+      try {
+        await execa('git', ['pull', 'origin', baseBranch], { cwd });
+      } catch (e) {
+        // No remote - skip pull
+      }
       await execa('git', ['checkout', '-b', this.branch], { cwd });
       this.log(`  [${this.story.id}] Created new branch: ${this.branch}`);
     }

@@ -229,15 +229,19 @@ export async function runClaude(prompt, options = {}) {
     }
 
     // Stream output to track activity in real-time (for stuck detection)
-    if (agentId && subprocess.stdout) {
-      subprocess.stdout.on('data', (chunk) => {
-        updateAgentOutput(agentId, chunk.toString().slice(-200));
-      });
-    }
-    if (agentId && subprocess.stderr) {
-      subprocess.stderr.on('data', (chunk) => {
-        updateAgentOutput(agentId, chunk.toString().slice(-200));
-      });
+    // Use 'all' stream when available (combined stdout+stderr), fallback to individual streams
+    if (agentId) {
+      const outputStream = subprocess.all || subprocess.stdout;
+      if (outputStream) {
+        outputStream.on('data', (chunk) => {
+          updateAgentOutput(agentId, chunk.toString().slice(-200));
+        });
+      }
+      if (!subprocess.all && subprocess.stderr) {
+        subprocess.stderr.on('data', (chunk) => {
+          updateAgentOutput(agentId, chunk.toString().slice(-200));
+        });
+      }
     }
 
     // Now await the result
