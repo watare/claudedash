@@ -45,6 +45,10 @@ export function parseEpicsFile(epicsPath) {
     // Match Epic headers: ## Epic 1: Title or ### Epic 1: Title
     const epicMatch = line.match(/^#{2,3}\s+Epic\s+(\d+):\s+(.+)$/i);
     if (epicMatch) {
+      // Push current story to current epic before switching epics
+      if (currentStory && currentEpic) {
+        currentEpic.stories.push(currentStory);
+      }
       if (currentEpic) {
         epics.push(currentEpic);
       }
