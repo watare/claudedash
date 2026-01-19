@@ -80,10 +80,11 @@ export class EpicWorker {
         throw new Error(`${failedStories.length} stories failed`);
       }
 
-      // Note: Each story now merges its own PR in the merge-pr step
-      // So we don't need to batch merge here
+      // Step 2: Merge epic branch to master
+      this.log(`[Epic ${this.epic.number}] Merging epic branch to ${this.config.baseBranch}...`);
+      await this.mergeEpicBranch();
 
-      // Step 2: Run tests (stories should already be merged)
+      // Step 3: Run tests on master
       this.log(`[Epic ${this.epic.number}] Running tests...`);
       this.result.testsPass = await this.runTests();
 
@@ -155,6 +156,69 @@ export class EpicWorker {
     } catch (error) {
       this.log(`[Epic ${this.epic.number}] Warning: Failed to commit story artifacts: ${error.message}`);
       // Don't throw - try to continue anyway
+    }
+  }
+
+  /**
+   * Merge the epic branch back to the base branch (master)
+   */
+  async mergeEpicBranch() {
+    const cwd = this.config.projectRoot;
+    const baseBranch = this.config.baseBranch;
+    const epicBranch = `feature/epic-${this.epic.number}`;
+
+    try {
+      // Checkout base branch
+      await execa('git', ['checkout', baseBranch], { cwd });
+      try {
+        await execa('git', ['pull', 'origin', baseBranch], { cwd });
+      } catch (e) {
+        // No remote - that's ok
+      }
+
+      // Merge epic branch
+      try {
+        await execa('git', ['merge', epicBranch, '--no-ff', '-m',
+          `feat(epic-${this.epic.number}): ${this.epic.title}\n\nMerges all stories from Epic ${this.epic.number}`], { cwd });
+        this.log(`[Epic ${this.epic.number}] Merged ${epicBranch} to ${baseBranch}`);
+      } catch (e) {
+        // Merge conflict - try to resolve _bmad-output conflicts
+        this.log(`[Epic ${this.epic.number}] Merge conflict, attempting resolution...`);
+        try {
+          await execa('git', ['checkout', '--theirs', '_bmad-output/'], { cwd });
+          await execa('git', ['add', '_bmad-output/'], { cwd });
+          // For submodules, accept ours
+          await execa('git', ['checkout', '--ours', '.'], { cwd }).catch(() => {});
+          await execa('git', ['add', '.'], { cwd });
+          await execa('git', ['commit', '-m',
+            `feat(epic-${this.epic.number}): ${this.epic.title}\n\nMerges all stories from Epic ${this.epic.number}`], { cwd });
+          this.log(`[Epic ${this.epic.number}] Merge conflict resolved`);
+        } catch (e2) {
+          await execa('git', ['merge', '--abort'], { cwd }).catch(() => {});
+          throw new Error(`Merge failed: ${e.message}`);
+        }
+      }
+
+      // Delete epic branch
+      try {
+        await execa('git', ['branch', '-d', epicBranch], { cwd });
+      } catch (e) {
+        // Force delete if needed
+        await execa('git', ['branch', '-D', epicBranch], { cwd }).catch(() => {});
+      }
+
+      // Push to remote
+      if (this.config.autoPush) {
+        try {
+          await execa('git', ['push', 'origin', baseBranch], { cwd });
+          this.log(`[Epic ${this.epic.number}] Pushed to origin/${baseBranch}`);
+        } catch (e) {
+          this.log(`[Epic ${this.epic.number}] Push failed: ${e.message}`);
+        }
+      }
+    } catch (error) {
+      this.log(`[Epic ${this.epic.number}] Epic branch merge failed: ${error.message}`);
+      throw error;
     }
   }
 

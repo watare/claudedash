@@ -143,60 +143,56 @@ export class StoryWorker {
     const cwd = this.config.projectRoot;
     let baseBranch = this.config.baseBranch;
 
-    // First, ensure we're on the base branch with latest changes
-    // This should be clean after previous story's merge
-    try {
-      await execa('git', ['checkout', baseBranch], { cwd });
-    } catch (e) {
-      // Try common alternatives if configured base doesn't exist
-      const alternatives = ['main', 'master', 'develop'];
-      for (const alt of alternatives) {
-        try {
-          await execa('git', ['checkout', alt], { cwd });
-          baseBranch = alt;
-          break;
-        } catch (e2) {
-          // Try next
-        }
-      }
-    }
-
-    // Fetch and pull latest (skip if no remote configured)
-    try {
-      await execa('git', ['fetch', 'origin'], { cwd });
-      await execa('git', ['pull', 'origin', baseBranch], { cwd });
-    } catch (e) {
-      // No remote origin - that's fine for local-only repos
-      this.log(`  [${this.story.id}] No remote origin, skipping fetch/pull`);
-    }
-
-    // Check if feature branch already exists
-    const { stdout: branches } = await execa('git', ['branch', '-a'], { cwd });
-    const branchExists = branches.includes(this.branch);
-
-    // Commit any uncommitted orchestrator artifacts before checkout
+    // Commit any uncommitted orchestrator artifacts first
     await this.commitOrchestratorArtifacts();
 
-    if (branchExists) {
-      // Branch exists - checkout and rebase on latest base
-      await execa('git', ['checkout', this.branch], { cwd });
-      this.log(`  [${this.story.id}] Checked out existing branch: ${this.branch}`);
+    // Fetch latest (skip if no remote configured)
+    try {
+      await execa('git', ['fetch', 'origin'], { cwd });
+    } catch (e) {
+      this.log(`  [${this.story.id}] No remote origin, skipping fetch`);
+    }
 
-      // Rebase on latest base to get any merged changes
+    // Use epic-level branch instead of story-level branch
+    // This keeps all stories for an epic on one branch, then merges when epic is done
+    const epicBranch = `feature/epic-${this.story.epicNumber}`;
+    this.branch = epicBranch;  // Override story branch with epic branch
+
+    // Check if epic branch already exists
+    const { stdout: branches } = await execa('git', ['branch', '-a'], { cwd });
+    const branchExists = branches.includes(epicBranch);
+
+    if (branchExists) {
+      // Epic branch exists - checkout
+      await execa('git', ['checkout', epicBranch], { cwd });
+      this.log(`  [${this.story.id}] Checked out epic branch: ${epicBranch}`);
+
+      // Pull latest if remote exists
       try {
-        await execa('git', ['rebase', baseBranch], { cwd });
+        await execa('git', ['pull', 'origin', epicBranch], { cwd });
       } catch (e) {
-        // Rebase conflict - abort and continue (might already be up to date)
-        try {
-          await execa('git', ['rebase', '--abort'], { cwd });
-        } catch (e2) {
-          // No rebase in progress - that's fine
-        }
+        // No remote branch yet or no remote - that's ok
       }
     } else {
-      // Create new branch from base
-      await execa('git', ['checkout', '-b', this.branch], { cwd });
-      this.log(`  [${this.story.id}] Created new branch: ${this.branch}`);
+      // Create epic branch from base
+      try {
+        await execa('git', ['checkout', baseBranch], { cwd });
+      } catch (e) {
+        // Try alternatives
+        for (const alt of ['main', 'master', 'develop']) {
+          try {
+            await execa('git', ['checkout', alt], { cwd });
+            baseBranch = alt;
+            break;
+          } catch (e2) {}
+        }
+      }
+      try {
+        await execa('git', ['pull', 'origin', baseBranch], { cwd });
+      } catch (e) {}
+
+      await execa('git', ['checkout', '-b', epicBranch], { cwd });
+      this.log(`  [${this.story.id}] Created epic branch: ${epicBranch}`);
     }
 
     // Update status
@@ -204,7 +200,7 @@ export class StoryWorker {
       [this.story.slug]: 'in-progress',
     });
 
-    return { branch: this.branch, created: !branchExists };
+    return { branch: epicBranch, created: !branchExists };
   }
 
   async runDev() {
@@ -302,15 +298,27 @@ export class StoryWorker {
   }
 
   async createPR() {
-    const result = await runCreatePR(this.story, this.branch, this.config);
+    // With epic-level branches, we don't create individual story PRs
+    // Just ensure all changes are committed with a proper message
+    const cwd = this.config.projectRoot;
 
-    // Try to extract PR URL from output
-    const urlMatch = result.output.match(/https:\/\/github\.com\/[^\s]+\/pull\/\d+/);
-    if (urlMatch) {
-      this.result.prUrl = urlMatch[0];
+    try {
+      // Check if there are uncommitted changes
+      const { stdout: status } = await execa('git', ['status', '--porcelain'], { cwd });
+      if (status.trim()) {
+        // Commit any remaining changes
+        await execa('git', ['add', '-A'], { cwd });
+        await execa('git', ['commit', '-m',
+          `feat(${this.story.id}): ${this.story.title}\n\nImplements story ${this.story.id} acceptance criteria`], { cwd });
+        this.log(`  [${this.story.id}] Committed story changes`);
+      }
+    } catch (e) {
+      // Might fail if nothing to commit - that's ok
+      this.log(`  [${this.story.id}] No additional changes to commit`);
     }
 
-    return result;
+    // PR will be created at epic level, not story level
+    return { success: true, output: 'Story committed to epic branch' };
   }
 
   /**
@@ -336,44 +344,34 @@ export class StoryWorker {
   }
 
   /**
-   * Merge the PR and return to base branch for clean sequential execution
+   * Push story changes to the epic branch (merge to master happens at epic level)
    */
   async mergePR() {
     const cwd = this.config.projectRoot;
-    const baseBranch = this.config.baseBranch;
+    const epicBranch = this.branch;  // Using epic-level branch
 
-    // Try to merge via gh CLI if PR was created
-    if (this.result.prUrl) {
-      const prNum = this.result.prUrl.match(/\/pull\/(\d+)/)?.[1];
-      if (prNum) {
-        this.log(`  [${this.story.id}] Merging PR #${prNum}...`);
-        try {
-          await execa('gh', ['pr', 'merge', prNum, '--squash', '--delete-branch'], { cwd });
-          this.log(`  [${this.story.id}] PR #${prNum} merged successfully`);
-        } catch (e) {
-          // If gh merge fails, try manual merge
-          this.log(`  [${this.story.id}] gh merge failed, trying manual merge: ${e.message}`);
-          await this.manualMerge();
-        }
-      }
-    } else {
-      // No PR URL, do manual merge
-      await this.manualMerge();
-    }
-
-    // Commit any uncommitted artifacts before returning to base branch
+    // Commit any uncommitted changes
     await this.commitOrchestratorArtifacts();
 
-    // Return to base branch with latest changes
-    await execa('git', ['checkout', baseBranch], { cwd });
-    try {
-      await execa('git', ['pull', 'origin', baseBranch], { cwd });
-    } catch (e) {
-      // Pull might fail if no remote - that's ok
+    // Push to epic branch
+    if (this.config.autoPush) {
+      try {
+        await execa('git', ['push', 'origin', epicBranch], { cwd });
+        this.log(`  [${this.story.id}] Pushed to ${epicBranch}`);
+      } catch (e) {
+        // First push might need -u flag
+        try {
+          await execa('git', ['push', '-u', 'origin', epicBranch], { cwd });
+          this.log(`  [${this.story.id}] Pushed to ${epicBranch} (first push)`);
+        } catch (e2) {
+          this.log(`  [${this.story.id}] Push failed (no remote?): ${e2.message}`);
+        }
+      }
     }
 
-    this.log(`  [${this.story.id}] Returned to ${baseBranch} branch`);
-    return { merged: true };
+    // Stay on epic branch for next story (no checkout back to master)
+    this.log(`  [${this.story.id}] Story complete on ${epicBranch}`);
+    return { merged: false, branch: epicBranch };
   }
 
   /**
