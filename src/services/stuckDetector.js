@@ -82,6 +82,13 @@ function checkForStuckAgents() {
     const inactiveMs = now - lastActivityTime;
 
     if (inactiveMs > thresholdMs) {
+      // Re-check agent status before marking stuck to prevent race condition (Issue 1.2 fix)
+      // The agent might have completed between getAllAgents() and now
+      const currentAgent = getAgent(agent.id);
+      if (!currentAgent || currentAgent.status !== 'running') {
+        continue; // Agent completed/removed, don't mark as stuck
+      }
+
       // Mark agent as stuck
       markStuck(agent.id);
 

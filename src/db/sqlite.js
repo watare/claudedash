@@ -123,6 +123,15 @@ export function insertAuditLog(entry) {
 }
 
 /**
+ * Escape special characters in LIKE patterns (Issue 6.1 fix)
+ * @param {string} str - User input string
+ * @returns {string} - Escaped string safe for LIKE patterns
+ */
+function escapeLikePattern(str) {
+  return str.replace(/[%_\\]/g, '\\$&');
+}
+
+/**
  * Query audit logs with filters
  * @param {AuditLogFilters} filters - Query filters
  * @returns {AuditLogQueryResult} - Query results with total count
@@ -140,8 +149,9 @@ export function queryAuditLogs(filters = {}) {
   }
 
   if (filters.story) {
-    conditions.push('story_id LIKE ?');
-    params.push(`%${filters.story}%`);
+    // Issue 6.1 fix: Escape special LIKE characters to prevent injection
+    conditions.push("story_id LIKE ? ESCAPE '\\'");
+    params.push(`%${escapeLikePattern(filters.story)}%`);
   }
 
   if (filters.dateFrom) {

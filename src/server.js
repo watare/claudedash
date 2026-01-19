@@ -23,6 +23,7 @@ import storiesRouter from './api/stories.js';
 import historyRouter from './api/history.js';
 import { setAuthenticatedClients, broadcast } from './services/websocket.js';
 import { startStuckDetection, stopStuckDetection } from './services/stuckDetector.js';
+import { stopAllWatching } from './services/fileWatcher.js';
 import { getAgentById } from './claude-runner.js';
 import {
   startRun,
@@ -163,6 +164,44 @@ class DashboardServer {
 
   stopStuckDetection() {
     stopStuckDetection();
+  }
+
+  /**
+   * Graceful shutdown handler (Issue 4.3 fix)
+   * Cleans up stuck detection, file watchers, and session cleanup interval
+   */
+  shutdown() {
+    console.log('\n[SERVER] Shutting down gracefully...');
+
+    // Stop stuck detection interval
+    this.stopStuckDetection();
+
+    // Stop all file watchers
+    stopAllWatching();
+
+    // Stop session cleanup interval
+    if (this.sessionCleanupInterval) {
+      clearInterval(this.sessionCleanupInterval);
+      this.sessionCleanupInterval = null;
+    }
+
+    // Close WebSocket connections
+    for (const client of this.clients) {
+      try {
+        client.close(1001, 'Server shutting down');
+      } catch (e) {
+        // Ignore close errors
+      }
+    }
+
+    // Close HTTP server
+    if (this.server) {
+      this.server.close(() => {
+        console.log('[SERVER] HTTP server closed');
+      });
+    }
+
+    console.log('[SERVER] Shutdown complete');
   }
 
   setupServer() {
@@ -955,6 +994,17 @@ program
       user: options.user,
       pass: options.pass,
     });
+
+    // Issue 4.3 fix: Register shutdown handlers
+    process.on('SIGINT', () => {
+      server.shutdown();
+      process.exit(0);
+    });
+    process.on('SIGTERM', () => {
+      server.shutdown();
+      process.exit(0);
+    });
+
     server.start();
   });
 

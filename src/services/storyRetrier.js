@@ -18,7 +18,7 @@ import {
   registerStory,
 } from './storyTracker.js';
 import { emitStoryRetry, emitAgentSpawn } from './websocket.js';
-import { registerAgent as registerAgentProcess } from './agentRegistry.js';
+import { registerAgent as registerAgentProcess, getAllAgents } from './agentRegistry.js';
 import { updateSprintStatus, parseSprintStatus } from '../parser.js';
 
 /**
@@ -74,6 +74,15 @@ export async function retryStory(storyId, options = {}) {
   // Validate story state
   if (story.status === 'in-progress') {
     throw new Error('Story already in progress');
+  }
+
+  // Issue 3.4 fix: Also check agentRegistry for running agents with matching storyId
+  // This prevents spawning a second agent if the tracker is stale (e.g., after server restart)
+  const runningAgents = getAllAgents().filter(
+    a => a.storyId === storyId && a.status === 'running'
+  );
+  if (runningAgents.length > 0) {
+    throw new Error(`Story already has ${runningAgents.length} running agent(s)`);
   }
 
   const retryableStates = ['failed', 'killed'];
@@ -169,10 +178,12 @@ async function spawnAgentForStory(storyId, agentId, config) {
     storyTitle: story.title,
   });
 
-  // Determine branch name
+  // Determine branch name - use epic-level branches (not story-level)
+  // Extract epic number from storyId format: "epicNum-storyNum" (e.g., "1-3" -> epic 1)
+  const epicNum = storyId.split('-')[0];
   const branch = config.branchPrefix
-    ? `${config.branchPrefix}${storyId}`
-    : `feature/${storyId}`;
+    ? `${config.branchPrefix}epic-${epicNum}`
+    : `feature/epic-${epicNum}`;
 
   try {
     // Run the dev-story workflow

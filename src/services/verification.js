@@ -31,7 +31,14 @@ const STATUS_ALIASES = {
   'pending': 'backlog',
   'todo': 'backlog',
   'wip': 'in-progress',
-  'working': 'in-progress'
+  'working': 'in-progress',
+  // Issue 5.4 fix: Add missing status mappings
+  'story-complete': 'story-complete',  // Preserve as canonical status
+  'review': 'review',                  // Preserve as canonical status
+  'killed': 'killed',                  // Preserve as canonical status
+  'verification_failed': 'verification_failed',  // Preserve as canonical status
+  'ready-for-dev': 'ready-for-dev',    // Preserve as canonical status
+  'failed': 'failed',                  // Preserve as canonical status
 };
 
 // ============================================================================
@@ -58,6 +65,11 @@ const VALID_RESULT_TYPES = ['match', 'mismatch', 'error'];
  * @param {number} [entry.attemptCount] - Number of attempts
  * @param {string} [entry.details] - Additional JSON details
  */
+/**
+ * Fallback file path for audit logs when DB fails (Issue 3.1 fix)
+ */
+const AUDIT_LOG_FALLBACK_PATH = process.env.AUDIT_LOG_FALLBACK || '/tmp/bmad-audit-fallback.log';
+
 export function logVerificationAttempt(entry) {
   // Validate result type early to catch programming errors
   if (!VALID_RESULT_TYPES.includes(entry.result)) {
@@ -70,8 +82,22 @@ export function logVerificationAttempt(entry) {
     console.log(chalk.gray(`[AUDIT] Verification logged (id: ${rowId}): ${entry.storyId} - ${entry.result}`));
     return rowId;
   } catch (error) {
-    // Don't crash on audit log failure - just log the error
-    console.log(chalk.yellow(`[AUDIT] Warning: Failed to log verification attempt: ${error.message}`));
+    // Issue 3.1 fix: Don't crash on audit log failure - write to fallback file
+    console.log(chalk.yellow(`[AUDIT] Warning: Failed to log verification attempt to DB: ${error.message}`));
+
+    // Write to fallback file for forensic recovery
+    try {
+      const fallbackEntry = JSON.stringify({
+        ...entry,
+        _fallbackReason: error.message,
+        _fallbackTimestamp: new Date().toISOString(),
+      });
+      fs.appendFileSync(AUDIT_LOG_FALLBACK_PATH, fallbackEntry + '\n');
+      console.log(chalk.yellow(`[AUDIT] Fallback: Written to ${AUDIT_LOG_FALLBACK_PATH}`));
+    } catch (fallbackError) {
+      console.log(chalk.red(`[AUDIT] Critical: Failed to write to fallback file: ${fallbackError.message}`));
+    }
+
     return null;
   }
 }
@@ -81,6 +107,37 @@ export function logVerificationAttempt(entry) {
  * @type {Map<string, VerificationResult>}
  */
 const verificationResults = new Map();
+
+/**
+ * TTL for verification results in milliseconds (1 hour)
+ * Issue 2.3 fix: Prevent unbounded cache growth
+ */
+const VERIFICATION_CACHE_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * Clean up stale verification results older than TTL (Issue 2.3 fix)
+ */
+export function cleanupVerificationCache() {
+  const now = Date.now();
+  let cleaned = 0;
+
+  for (const [storyKey, result] of verificationResults.entries()) {
+    const lastCheckedTime = result.lastChecked ? new Date(result.lastChecked).getTime() : 0;
+    if (now - lastCheckedTime > VERIFICATION_CACHE_TTL_MS) {
+      verificationResults.delete(storyKey);
+      cleaned++;
+    }
+  }
+
+  if (cleaned > 0) {
+    console.log(chalk.gray(`[VERIFY] Cleaned up ${cleaned} stale verification cache entries`));
+  }
+
+  return cleaned;
+}
+
+// Start periodic cache cleanup (every 15 minutes)
+const cacheCleanupInterval = setInterval(cleanupVerificationCache, 15 * 60 * 1000);
 
 /**
  * Normalize status string for comparison
@@ -500,7 +557,7 @@ export async function spawnVerificationAgent(prompt, projectPath, options = {}) 
   // Support mock commands for testing
   const execCommand = mockCommand || command;
   const execArgs = mockArgs || [
-    '--dangerously-skip-permissions',
+    '--permission-mode', 'bypassPermissions',
     '--print',
     '-p', prompt
   ];

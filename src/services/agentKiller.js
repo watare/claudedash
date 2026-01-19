@@ -9,6 +9,7 @@
 
 import { getAgent, updateAgentStatus, removeAgent } from './agentRegistry.js';
 import { killAgent as markAgentKilled } from '../claude-runner.js';
+import { updateSprintStatus } from '../parser.js';
 
 /**
  * @typedef {Object} KillResult
@@ -63,15 +64,34 @@ function isProcessRunning(pid) {
 }
 
 /**
+ * Update sprint status when agent is killed (Issue 3.3 fix)
+ * @param {string} storyId - Story identifier
+ * @param {string} sprintStatusPath - Path to sprint-status.yaml
+ */
+async function updateSprintStatusOnKill(storyId, sprintStatusPath) {
+  if (!storyId || !sprintStatusPath) return;
+
+  try {
+    await updateSprintStatus(sprintStatusPath, { [storyId]: 'killed' });
+    console.log(`[agentKiller] Updated sprint status for ${storyId} to 'killed'`);
+  } catch (err) {
+    console.error(`[agentKiller] Failed to update sprint status for ${storyId}:`, err.message);
+  }
+}
+
+/**
  * Kill an agent's subprocess with graceful termination
  *
  * First sends SIGTERM and waits up to 5 seconds for graceful shutdown.
  * If the process doesn't terminate, sends SIGKILL.
  *
  * @param {string} agentId - Agent ID to kill
+ * @param {Object} [options] - Options for kill operation
+ * @param {string} [options.sprintStatusPath] - Path to sprint-status.yaml for status update
  * @returns {Promise<KillResult>}
  */
-export async function killAgentProcess(agentId) {
+export async function killAgentProcess(agentId, options = {}) {
+  const { sprintStatusPath } = options;
   const timestamp = new Date().toISOString();
   const agent = getAgent(agentId);
 
@@ -92,6 +112,9 @@ export async function killAgentProcess(agentId) {
     // Process already dead, clean up registry
     updateAgentStatus(agentId, 'killed');
     markAgentKilled(agentId);
+
+    // Update sprint status (Issue 3.3 fix)
+    await updateSprintStatusOnKill(agent.storyId, sprintStatusPath);
 
     return {
       success: true,
@@ -114,6 +137,9 @@ export async function killAgentProcess(agentId) {
       updateAgentStatus(agentId, 'killed');
       markAgentKilled(agentId);
 
+      // Update sprint status (Issue 3.3 fix)
+      await updateSprintStatusOnKill(agent.storyId, sprintStatusPath);
+
       return {
         success: true,
         agentId,
@@ -131,6 +157,9 @@ export async function killAgentProcess(agentId) {
     updateAgentStatus(agentId, 'killed');
     markAgentKilled(agentId);
 
+    // Update sprint status (Issue 3.3 fix)
+    await updateSprintStatusOnKill(agent.storyId, sprintStatusPath);
+
     return {
       success: true,
       agentId,
@@ -142,6 +171,9 @@ export async function killAgentProcess(agentId) {
     if (error.code === 'ESRCH') {
       updateAgentStatus(agentId, 'killed');
       markAgentKilled(agentId);
+
+      // Update sprint status (Issue 3.3 fix)
+      await updateSprintStatusOnKill(agent.storyId, sprintStatusPath);
 
       return {
         success: true,

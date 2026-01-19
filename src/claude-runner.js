@@ -3,6 +3,7 @@ import { spawn } from 'child_process';
 import * as pty from 'node-pty';
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'crypto';
 import {
   emitAgentSpawn,
   emitAgentOutput,
@@ -70,10 +71,10 @@ const activeAgents = new Map();
 let agentIdCounter = 0;
 
 /**
- * Generate unique agent ID
+ * Generate unique agent ID (Issue 6.2 fix: Use crypto.randomUUID for unpredictability)
  */
 function generateAgentId() {
-  return `agent-${Date.now()}-${++agentIdCounter}`;
+  return `agent-${randomUUID()}`;
 }
 
 /**
@@ -251,6 +252,8 @@ export async function runClaude(prompt, options = {}) {
   const startTime = Date.now();
 
   // Register agent for tracking (if enabled)
+  // Note: We register in activeAgents first, then in agentRegistry after PTY spawn succeeds.
+  // This ensures both registries stay in sync - if spawn fails, we clean up activeAgents.
   let agentId = null;
   if (trackAgent) {
     agentId = registerAgent({
@@ -278,6 +281,8 @@ export async function runClaude(prompt, options = {}) {
       if (agentId) {
         updateAgentOutput(agentId, `PTY spawn failed: ${spawnError.message}`);
         completeAgent(agentId, false);
+        // Clean up from activeAgents to prevent orphaned entry (Issue 1.1 fix)
+        activeAgents.delete(agentId);
       }
       throw spawnError;
     }
@@ -285,6 +290,7 @@ export async function runClaude(prompt, options = {}) {
     console.log(`[AGENT-${agentId}] PTY SPAWNED: PID=${ptyProcess.pid}, command=${command} ${args.join(' ')}`);
 
     // Register process with agentRegistry for kill functionality (Story 4.1)
+    // This must happen immediately after successful spawn to keep registries in sync
     if (agentId && ptyProcess.pid) {
       // Create a subprocess-like object for compatibility
       const processHandle = {
@@ -307,22 +313,47 @@ export async function runClaude(prompt, options = {}) {
     let questionCount = 0;
     let resolved = false;
 
-    // Set up timeout
+    // Set up timeout with SIGKILL fallback (Issue 4.1 fix)
     if (timeout > 0) {
-      timeoutId = setTimeout(() => {
-        console.log(`[PTY] Agent ${agentId}: Timeout after ${timeout}ms`);
-        try { ptyProcess.kill(); } catch (e) {}
+      timeoutId = setTimeout(async () => {
+        console.log(`[PTY] Agent ${agentId}: Timeout after ${timeout}ms, sending SIGTERM`);
+        try {
+          ptyProcess.kill('SIGTERM');
+          // Wait 5 seconds for graceful termination, then SIGKILL
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          // Check if process is still running by trying to send signal 0
+          try {
+            process.kill(ptyProcess.pid, 0);
+            // Process still running, send SIGKILL
+            console.log(`[PTY] Agent ${agentId}: SIGTERM ignored, sending SIGKILL`);
+            ptyProcess.kill('SIGKILL');
+          } catch (e) {
+            // Process already dead, that's fine
+          }
+        } catch (e) {
+          // Process might already be dead
+        }
       }, timeout);
     }
 
     // Track if we're waiting for AI response to prevent duplicate answers
     let waitingForAI = false;
 
+    // Maximum accumulated output size (Issue 2.4 fix: Prevent unbounded memory growth)
+    const MAX_ACCUMULATED_OUTPUT = 5 * 1024 * 1024; // 5MB
+
     // Process output and handle questions
     ptyProcess.onData((data) => {
       try {
         console.log(`[AGENT-${agentId}] DATA: ${data.length} bytes`);
         accumulatedOutput += data;
+
+        // Issue 2.4 fix: Limit accumulated output to prevent memory issues
+        if (accumulatedOutput.length > MAX_ACCUMULATED_OUTPUT) {
+          // Keep the last portion of output
+          accumulatedOutput = accumulatedOutput.slice(-MAX_ACCUMULATED_OUTPUT);
+        }
+
         outputBuffer += data;
 
         // Keep buffer manageable
@@ -343,6 +374,14 @@ export async function runClaude(prompt, options = {}) {
         // Check if output contains a question (ends with ?)
         const hasQuestion = /\?\s*$/.test(outputBuffer.trim());
         if (!hasQuestion) return;
+
+        // Limit auto-answered questions to prevent infinite loops
+        const MAX_AUTO_QUESTIONS = 25;
+        if (questionCount >= MAX_AUTO_QUESTIONS) {
+          console.log(`[PTY] Agent ${agentId}: Max questions (${MAX_AUTO_QUESTIONS}) reached, stopping auto-response`);
+          outputBuffer = '';
+          return;
+        }
 
         // Check if this is a complex question that needs Supervisor AI
         if (isSupervisorAvailable() && isComplexQuestion(outputBuffer)) {
@@ -379,6 +418,8 @@ export async function runClaude(prompt, options = {}) {
               }
             } catch (err) {
               console.error(`[AGENT-${agentId}] Supervisor AI error: ${err.message}`);
+              // Issue 5.3 fix: Increment questionCount in error path too
+              questionCount++;
               // Fallback to default answer on timeout/error - only write if process hasn't exited
               if (!resolved) {
                 ptyProcess.write('yes\n');
@@ -456,8 +497,9 @@ export async function runClaude(prompt, options = {}) {
       completeAgent(agentId, output.success);
       // Stop file watching
       stopWatching(agentId);
-      // Remove from process registry on natural exit (Story 4.1)
-      removeAgentProcess(agentId);
+      // Remove from process registry after a short delay to allow clients to query final state
+      // This prevents race condition where client receives complete event but agent is already removed
+      setTimeout(() => removeAgentProcess(agentId), 1000);
     }
 
     // Write to log file if specified
@@ -486,8 +528,8 @@ ${output.output}
       completeAgent(agentId, false);
       // Stop file watching
       stopWatching(agentId);
-      // Remove from process registry on error (Story 4.1)
-      removeAgentProcess(agentId);
+      // Remove from process registry after a short delay to allow clients to query final state
+      setTimeout(() => removeAgentProcess(agentId), 1000);
     }
 
     const output = {
@@ -752,10 +794,28 @@ export function isSuccessfulCompletion(output) {
   const successPatterns = [
     /successfully (created|completed|implemented|fixed|updated)/i,
     /has been (created|completed|implemented|fixed|updated)/i,
-    /done|finished|complete/i,
-    /committed|pushed/i,
-    /PR (created|opened|ready)/i,
+    /\b(I'?ve |I have )?(done|finished|completed)\b/i,  // More specific - requires context
+    /\bchanges? (have been )?committed\b/i,
+    /\bpushed to (origin|remote)\b/i,
+    /PR (created|opened|ready|submitted)/i,
+    /\ball (tasks?|items?|criteria) (are )?(done|complete|met)\b/i,
+    /implementation (is )?complete/i,
   ];
+
+  // Negative patterns - if these match, it's NOT a success
+  const failurePatterns = [
+    /not (yet )?(done|finished|complete)/i,
+    /incomplete/i,
+    /failed to/i,
+    /could not/i,
+    /unable to/i,
+    /error:/i,
+  ];
+
+  // Check for failure indicators first
+  if (failurePatterns.some(pattern => pattern.test(output))) {
+    return false;
+  }
 
   return successPatterns.some(pattern => pattern.test(output));
 }

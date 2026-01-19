@@ -276,9 +276,9 @@ export class Orchestrator {
     report.push(`Project: ${this.config.projectRoot}`);
     report.push('');
 
-    // Summary
-    const completed = this.results.filter(r => r.status === 'completed').length;
-    const failed = this.results.filter(r => r.status === 'failed').length;
+    // Summary (Issue 5.5 fix: Handle null/undefined results)
+    const completed = this.results?.filter(r => r.status === 'completed').length ?? 0;
+    const failed = this.results?.filter(r => r.status === 'failed').length ?? 0;
     report.push('## Summary');
     report.push(`- Epics processed: ${this.results.length}`);
     report.push(`- Completed: ${completed}`);
