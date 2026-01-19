@@ -401,19 +401,59 @@ export class StoryWorker {
       await execa('git', ['merge', this.branch, '--no-ff', '-m',
         `Merge story ${this.story.id}: ${this.story.title}`], { cwd });
     } catch (e) {
-      // Merge conflict - try to resolve or abort
+      // Merge conflict - try to resolve automatically
       this.log(`  [${this.story.id}] Merge conflict detected, attempting resolution...`);
 
-      // For _bmad-output files, accept theirs (feature branch version)
       try {
-        await execa('git', ['checkout', '--theirs', '_bmad-output/'], { cwd });
-        await execa('git', ['add', '_bmad-output/'], { cwd });
+        // Get list of submodules to handle them specially
+        let submodules = [];
+        try {
+          const { stdout: submoduleList } = await execa('git', ['config', '--file', '.gitmodules', '--get-regexp', 'path'], { cwd });
+          submodules = submoduleList.split('\n').map(line => line.split(' ')[1]).filter(Boolean);
+        } catch {
+          // No .gitmodules or error reading it
+        }
+
+        // Get list of conflicted files
+        const { stdout: conflictList } = await execa('git', ['diff', '--name-only', '--diff-filter=U'], { cwd });
+        const conflictedFiles = conflictList.trim().split('\n').filter(f => f);
+
+        for (const file of conflictedFiles) {
+          if (file.startsWith('_bmad-output/')) {
+            // For orchestrator artifacts, accept feature branch version (theirs)
+            await execa('git', ['checkout', '--theirs', file], { cwd });
+            await execa('git', ['add', file], { cwd });
+            this.log(`  [${this.story.id}] Resolved ${file} (accepted theirs)`);
+          } else if (submodules.includes(file)) {
+            // Submodule conflict - accept base branch version (ours) to avoid issues
+            this.log(`  [${this.story.id}] Submodule conflict: ${file} - accepting ours`);
+            await execa('git', ['checkout', '--ours', file], { cwd });
+            await execa('git', ['add', file], { cwd });
+          } else {
+            // Other conflicts - accept theirs as default for story changes
+            await execa('git', ['checkout', '--theirs', file], { cwd });
+            await execa('git', ['add', file], { cwd });
+            this.log(`  [${this.story.id}] Resolved ${file} (accepted theirs)`);
+          }
+        }
+
+        // Check for any remaining unmerged files
+        const { stdout: remaining } = await execa('git', ['diff', '--name-only', '--diff-filter=U'], { cwd });
+        if (remaining.trim()) {
+          throw new Error(`Unresolved conflicts: ${remaining.trim()}`);
+        }
+
+        // Commit the merge
         await execa('git', ['commit', '-m', `Merge story ${this.story.id}: ${this.story.title}`], { cwd });
         this.log(`  [${this.story.id}] Merge conflict resolved`);
       } catch (e2) {
         // Can't resolve - abort and throw
-        await execa('git', ['merge', '--abort'], { cwd });
-        throw new Error(`Merge failed and could not be resolved: ${e.message}`);
+        try {
+          await execa('git', ['merge', '--abort'], { cwd });
+        } catch {
+          // Merge might not be in progress
+        }
+        throw new Error(`Merge failed and could not be resolved: ${e2.message}`);
       }
     }
 
