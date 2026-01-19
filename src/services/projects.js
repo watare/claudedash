@@ -127,7 +127,8 @@ function deriveProjectStatus(sprintStatus) {
     return 'done';
   }
 
-  return 'waiting';
+  // No in-progress, no ready-for-dev, not done = idle (waiting to start)
+  return 'idle';
 }
 
 /**

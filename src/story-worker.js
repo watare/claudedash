@@ -91,6 +91,9 @@ export class StoryWorker {
       // Step 5: Create PR (only if verification passed)
       await this.step('create-pr', () => this.createPR());
 
+      // Step 6: Merge PR and return to base branch (for sequential execution)
+      await this.step('merge-pr', () => this.mergePR());
+
       this.result.status = 'completed';
       this.log(`Completed story ${this.story.id}`);
     } catch (error) {
@@ -129,7 +132,7 @@ export class StoryWorker {
     }
 
     // Update status
-    updateSprintStatus(this.config.sprintStatusPath, {
+    await updateSprintStatus(this.config.sprintStatusPath, {
       [this.story.slug]: 'ready-for-dev',
     });
 
@@ -138,53 +141,66 @@ export class StoryWorker {
 
   async createBranch() {
     const cwd = this.config.projectRoot;
+    let baseBranch = this.config.baseBranch;
 
-    // Fetch latest (skip if no remote configured)
+    // First, ensure we're on the base branch with latest changes
+    // This should be clean after previous story's merge
     try {
-      await execa('git', ['fetch', 'origin'], { cwd });
+      await execa('git', ['checkout', baseBranch], { cwd });
     } catch (e) {
-      // No remote origin - that's fine for local-only repos
-      this.log(`  [${this.story.id}] No remote origin, skipping fetch`);
+      // Try common alternatives if configured base doesn't exist
+      const alternatives = ['main', 'master', 'develop'];
+      for (const alt of alternatives) {
+        try {
+          await execa('git', ['checkout', alt], { cwd });
+          baseBranch = alt;
+          break;
+        } catch (e2) {
+          // Try next
+        }
+      }
     }
 
-    // Check if branch already exists
+    // Fetch and pull latest (skip if no remote configured)
+    try {
+      await execa('git', ['fetch', 'origin'], { cwd });
+      await execa('git', ['pull', 'origin', baseBranch], { cwd });
+    } catch (e) {
+      // No remote origin - that's fine for local-only repos
+      this.log(`  [${this.story.id}] No remote origin, skipping fetch/pull`);
+    }
+
+    // Check if feature branch already exists
     const { stdout: branches } = await execa('git', ['branch', '-a'], { cwd });
     const branchExists = branches.includes(this.branch);
 
+    // Commit any uncommitted orchestrator artifacts before checkout
+    await this.commitOrchestratorArtifacts();
+
     if (branchExists) {
-      // Checkout existing branch
+      // Branch exists - checkout and rebase on latest base
       await execa('git', ['checkout', this.branch], { cwd });
       this.log(`  [${this.story.id}] Checked out existing branch: ${this.branch}`);
-    } else {
-      // Create new branch from base - detect actual base branch
-      let baseBranch = this.config.baseBranch;
+
+      // Rebase on latest base to get any merged changes
       try {
-        await execa('git', ['checkout', baseBranch], { cwd });
+        await execa('git', ['rebase', baseBranch], { cwd });
       } catch (e) {
-        // Try common alternatives
-        const alternatives = ['main', 'master', 'develop'];
-        for (const alt of alternatives) {
-          try {
-            await execa('git', ['checkout', alt], { cwd });
-            baseBranch = alt;
-            break;
-          } catch (e2) {
-            // Try next
-          }
+        // Rebase conflict - abort and continue (might already be up to date)
+        try {
+          await execa('git', ['rebase', '--abort'], { cwd });
+        } catch (e2) {
+          // No rebase in progress - that's fine
         }
       }
-      // Pull if remote exists
-      try {
-        await execa('git', ['pull', 'origin', baseBranch], { cwd });
-      } catch (e) {
-        // No remote - skip pull
-      }
+    } else {
+      // Create new branch from base
       await execa('git', ['checkout', '-b', this.branch], { cwd });
       this.log(`  [${this.story.id}] Created new branch: ${this.branch}`);
     }
 
     // Update status
-    updateSprintStatus(this.config.sprintStatusPath, {
+    await updateSprintStatus(this.config.sprintStatusPath, {
       [this.story.slug]: 'in-progress',
     });
 
@@ -278,7 +294,7 @@ export class StoryWorker {
     }
 
     // Update status
-    updateSprintStatus(this.config.sprintStatusPath, {
+    await updateSprintStatus(this.config.sprintStatusPath, {
       [this.story.slug]: 'review',
     });
 
@@ -295,6 +311,128 @@ export class StoryWorker {
     }
 
     return result;
+  }
+
+  /**
+   * Commit any uncommitted orchestrator artifacts to allow clean git operations
+   */
+  async commitOrchestratorArtifacts() {
+    const cwd = this.config.projectRoot;
+    const { stdout: status } = await execa('git', ['status', '--porcelain'], { cwd });
+
+    if (!status.trim()) {
+      return; // Nothing to commit
+    }
+
+    this.log(`  [${this.story.id}] Committing orchestrator artifacts`);
+    try {
+      // Add all _bmad-output files (tracked and untracked)
+      await execa('git', ['add', '_bmad-output/'], { cwd });
+      await execa('git', ['commit', '-m', `chore(orchestrator): save artifacts for story ${this.story.id}`], { cwd });
+    } catch (e) {
+      // Might fail if nothing staged - that's ok
+      this.log(`  [${this.story.id}] Note: ${e.message}`);
+    }
+  }
+
+  /**
+   * Merge the PR and return to base branch for clean sequential execution
+   */
+  async mergePR() {
+    const cwd = this.config.projectRoot;
+    const baseBranch = this.config.baseBranch;
+
+    // Try to merge via gh CLI if PR was created
+    if (this.result.prUrl) {
+      const prNum = this.result.prUrl.match(/\/pull\/(\d+)/)?.[1];
+      if (prNum) {
+        this.log(`  [${this.story.id}] Merging PR #${prNum}...`);
+        try {
+          await execa('gh', ['pr', 'merge', prNum, '--squash', '--delete-branch'], { cwd });
+          this.log(`  [${this.story.id}] PR #${prNum} merged successfully`);
+        } catch (e) {
+          // If gh merge fails, try manual merge
+          this.log(`  [${this.story.id}] gh merge failed, trying manual merge: ${e.message}`);
+          await this.manualMerge();
+        }
+      }
+    } else {
+      // No PR URL, do manual merge
+      await this.manualMerge();
+    }
+
+    // Commit any uncommitted artifacts before returning to base branch
+    await this.commitOrchestratorArtifacts();
+
+    // Return to base branch with latest changes
+    await execa('git', ['checkout', baseBranch], { cwd });
+    try {
+      await execa('git', ['pull', 'origin', baseBranch], { cwd });
+    } catch (e) {
+      // Pull might fail if no remote - that's ok
+    }
+
+    this.log(`  [${this.story.id}] Returned to ${baseBranch} branch`);
+    return { merged: true };
+  }
+
+  /**
+   * Manual merge when gh CLI is not available or fails
+   */
+  async manualMerge() {
+    const cwd = this.config.projectRoot;
+    const baseBranch = this.config.baseBranch;
+
+    this.log(`  [${this.story.id}] Performing manual merge...`);
+
+    // Commit any uncommitted artifacts before checkout
+    await this.commitOrchestratorArtifacts();
+
+    // Checkout base branch
+    await execa('git', ['checkout', baseBranch], { cwd });
+    try {
+      await execa('git', ['pull', 'origin', baseBranch], { cwd });
+    } catch (e) {
+      // No remote - skip pull
+    }
+
+    // Merge the feature branch
+    try {
+      await execa('git', ['merge', this.branch, '--no-ff', '-m',
+        `Merge story ${this.story.id}: ${this.story.title}`], { cwd });
+    } catch (e) {
+      // Merge conflict - try to resolve or abort
+      this.log(`  [${this.story.id}] Merge conflict detected, attempting resolution...`);
+
+      // For _bmad-output files, accept theirs (feature branch version)
+      try {
+        await execa('git', ['checkout', '--theirs', '_bmad-output/'], { cwd });
+        await execa('git', ['add', '_bmad-output/'], { cwd });
+        await execa('git', ['commit', '-m', `Merge story ${this.story.id}: ${this.story.title}`], { cwd });
+        this.log(`  [${this.story.id}] Merge conflict resolved`);
+      } catch (e2) {
+        // Can't resolve - abort and throw
+        await execa('git', ['merge', '--abort'], { cwd });
+        throw new Error(`Merge failed and could not be resolved: ${e.message}`);
+      }
+    }
+
+    // Delete the feature branch locally
+    try {
+      await execa('git', ['branch', '-d', this.branch], { cwd });
+    } catch (e) {
+      // Branch might not exist or be protected - that's ok
+    }
+
+    // Push to remote if configured
+    if (this.config.autoPush) {
+      try {
+        await execa('git', ['push', 'origin', baseBranch], { cwd });
+        this.log(`  [${this.story.id}] Pushed to origin/${baseBranch}`);
+      } catch (e) {
+        this.log(`  [${this.story.id}] Push failed (no remote?): ${e.message}`);
+      }
+    }
   }
 
   // ===========================================================================
@@ -350,7 +488,7 @@ export class StoryWorker {
       pauseProject(projectId, `Verification failed for ${this.story.slug}: claimed ${claimedStatus}, actual ${result.finalStatus}`);
 
       // Update sprint status to verification_failed
-      updateSprintStatus(this.config.sprintStatusPath, {
+      await updateSprintStatus(this.config.sprintStatusPath, {
         [this.story.slug]: 'verification_failed',
       });
 

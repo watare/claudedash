@@ -40,7 +40,7 @@ export class EpicWorker {
 
     try {
       // Update epic status
-      updateSprintStatus(this.config.sprintStatusPath, {
+      await updateSprintStatus(this.config.sprintStatusPath, {
         [this.epic.id]: 'in-progress',
       });
 
@@ -52,6 +52,9 @@ export class EpicWorker {
         this.log(`[Epic ${this.epic.number}] PHASE 1: Creating ${storiesToCreate.length} story files...`);
         await this.createAllStories(storiesToCreate);
         this.log(`[Epic ${this.epic.number}] All story files created.`);
+
+        // Commit story files so they don't block branch checkout in Phase 2
+        await this.commitStoryArtifacts();
       } else {
         this.log(`[Epic ${this.epic.number}] PHASE 1: All story files already exist, skipping creation.`);
       }
@@ -77,11 +80,10 @@ export class EpicWorker {
         throw new Error(`${failedStories.length} stories failed`);
       }
 
-      // Step 2: Merge all PRs
-      this.log(`[Epic ${this.epic.number}] Merging ${this.result.storyResults.length} PRs...`);
-      await this.mergePRs();
+      // Note: Each story now merges its own PR in the merge-pr step
+      // So we don't need to batch merge here
 
-      // Step 3: Run tests
+      // Step 2: Run tests (stories should already be merged)
       this.log(`[Epic ${this.epic.number}] Running tests...`);
       this.result.testsPass = await this.runTests();
 
@@ -90,13 +92,13 @@ export class EpicWorker {
       }
 
       // Mark epic as done
-      updateSprintStatus(this.config.sprintStatusPath, {
+      await updateSprintStatus(this.config.sprintStatusPath, {
         [this.epic.id]: 'done',
       });
 
       // Mark all stories as done
       for (const story of this.epic.stories) {
-        updateSprintStatus(this.config.sprintStatusPath, {
+        await updateSprintStatus(this.config.sprintStatusPath, {
           [story.slug]: 'done',
         });
       }
@@ -114,6 +116,49 @@ export class EpicWorker {
   }
 
   /**
+   * Commit story artifacts created in Phase 1 so they don't block branch checkout
+   */
+  async commitStoryArtifacts() {
+    const cwd = this.config.projectRoot;
+
+    try {
+      // Stage all implementation artifacts (story files)
+      await execa('git', ['add', '_bmad-output/implementation-artifacts/'], { cwd });
+
+      // Also stage sprint-status.yaml if it was updated
+      try {
+        await execa('git', ['add', '_bmad-output/planning-artifacts/sprint-status.yaml'], { cwd });
+      } catch {
+        // sprint-status might not exist or be in a different location - that's ok
+      }
+
+      // Check if there's anything to commit
+      const { stdout: status } = await execa('git', ['status', '--porcelain'], { cwd });
+      if (!status.trim()) {
+        this.log(`[Epic ${this.epic.number}] No story artifacts to commit`);
+        return;
+      }
+
+      // Commit the story files
+      await execa('git', ['commit', '-m', `chore(orchestrator): create story files for Epic ${this.epic.number}\n\nStory files created by BMAD Orchestrator Phase 1`], { cwd });
+      this.log(`[Epic ${this.epic.number}] Committed story artifacts to ${this.config.baseBranch}`);
+
+      // Push if autoPush is enabled
+      if (this.config.autoPush) {
+        try {
+          await execa('git', ['push', 'origin', this.config.baseBranch], { cwd });
+          this.log(`[Epic ${this.epic.number}] Pushed story artifacts`);
+        } catch (e) {
+          this.log(`[Epic ${this.epic.number}] Push failed (no remote?): ${e.message}`);
+        }
+      }
+    } catch (error) {
+      this.log(`[Epic ${this.epic.number}] Warning: Failed to commit story artifacts: ${error.message}`);
+      // Don't throw - try to continue anyway
+    }
+  }
+
+  /**
    * Create all story files for this epic in parallel
    */
   async createAllStories(stories) {
@@ -127,7 +172,7 @@ export class EpicWorker {
           const result = await runCreateStory(story, this.config);
           if (result.success) {
             // Update status to ready-for-dev
-            updateSprintStatus(this.config.sprintStatusPath, {
+            await updateSprintStatus(this.config.sprintStatusPath, {
               [story.slug]: 'ready-for-dev',
             });
             // Update local story status so dev phase knows it's ready

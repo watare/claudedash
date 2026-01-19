@@ -2,6 +2,32 @@ import fs from 'fs';
 import yaml from 'js-yaml';
 
 /**
+ * Simple mutex for serializing file operations
+ * Prevents race conditions when multiple stories update sprint-status.yaml
+ */
+class FileMutex {
+  constructor() {
+    this.locks = new Map();
+  }
+
+  async acquire(filePath) {
+    while (this.locks.has(filePath)) {
+      await this.locks.get(filePath);
+    }
+    let resolve;
+    const promise = new Promise(r => { resolve = r; });
+    promise.resolve = resolve;
+    this.locks.set(filePath, promise);
+    return () => {
+      this.locks.delete(filePath);
+      resolve();
+    };
+  }
+}
+
+const fileMutex = new FileMutex();
+
+/**
  * Parse epics.md file to extract epic and story structure
  */
 export function parseEpicsFile(epicsPath) {
@@ -106,19 +132,27 @@ export function parseSprintStatus(statusPath) {
 }
 
 /**
- * Update sprint status file
+ * Update sprint status file with mutex lock to prevent race conditions
+ * @param {string} statusPath - Path to sprint-status.yaml
+ * @param {Object} updates - Key-value pairs to update
+ * @returns {Promise<void>}
  */
-export function updateSprintStatus(statusPath, updates) {
-  const content = fs.readFileSync(statusPath, 'utf8');
-  const data = yaml.load(content);
+export async function updateSprintStatus(statusPath, updates) {
+  const release = await fileMutex.acquire(statusPath);
+  try {
+    const content = fs.readFileSync(statusPath, 'utf8');
+    const data = yaml.load(content);
 
-  if (!data.development_status) {
-    data.development_status = {};
+    if (!data.development_status) {
+      data.development_status = {};
+    }
+
+    Object.assign(data.development_status, updates);
+
+    fs.writeFileSync(statusPath, yaml.dump(data, { lineWidth: -1 }));
+  } finally {
+    release();
   }
-
-  Object.assign(data.development_status, updates);
-
-  fs.writeFileSync(statusPath, yaml.dump(data, { lineWidth: -1 }));
 }
 
 /**

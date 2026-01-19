@@ -17,8 +17,8 @@ import {
  */
 export const defaultConfig = {
   // Parallelism settings
-  epicBatchSize: 2,           // Run epics in batches (e.g., 2 = Epic 1+2, then 3+4)
-  maxParallelStories: 1,      // Sequential stories within project (parallel is for independent projects)
+  epicBatchSize: 1,           // Run epics sequentially (1 at a time) to avoid race conditions
+  maxParallelStories: 1,      // Sequential stories within epic (1 at a time)
   continueOnEpicFailure: false, // Continue to next batch if epic fails
 
   // Claude Code settings

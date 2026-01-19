@@ -119,7 +119,7 @@ export async function retryStory(storyId, options = {}) {
   // Update sprint status if path provided
   if (projectPath && config.sprintStatusPath) {
     try {
-      updateSprintStatus(config.sprintStatusPath, {
+      await updateSprintStatus(config.sprintStatusPath, {
         [storyId]: 'pending',
       });
     } catch (err) {
