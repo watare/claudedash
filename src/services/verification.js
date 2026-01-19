@@ -137,7 +137,18 @@ export function cleanupVerificationCache() {
 }
 
 // Start periodic cache cleanup (every 15 minutes)
-const cacheCleanupInterval = setInterval(cleanupVerificationCache, 15 * 60 * 1000);
+let cacheCleanupInterval = setInterval(cleanupVerificationCache, 15 * 60 * 1000);
+
+/**
+ * Stop periodic cache cleanup interval
+ * Useful for graceful shutdown to avoid lingering timers
+ */
+export function stopVerificationCleanup() {
+  if (cacheCleanupInterval) {
+    clearInterval(cacheCleanupInterval);
+    cacheCleanupInterval = null;
+  }
+}
 
 /**
  * Normalize status string for comparison

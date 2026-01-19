@@ -30,7 +30,8 @@ export class StoryWorker {
     this.story = story;
     this.config = config;
     this.log = logger;
-    this.branch = `${config.branchPrefix}${story.slug}`;
+    // Use epic-level branch (all stories in an epic share the same branch)
+    this.branch = `feature/epic-${story.epicNumber}`;
     this.result = {
       story: story.id,
       slug: story.slug,
@@ -94,6 +95,11 @@ export class StoryWorker {
       // Step 6: Merge PR and return to base branch (for sequential execution)
       await this.step('merge-pr', () => this.mergePR());
 
+      // Update status to indicate story is complete (awaiting epic merge to master)
+      await updateSprintStatus(this.config.sprintStatusPath, {
+        [this.story.slug]: 'story-complete',
+      });
+
       this.result.status = 'completed';
       this.log(`Completed story ${this.story.id}`);
     } catch (error) {
@@ -153,17 +159,22 @@ export class StoryWorker {
       this.log(`  [${this.story.id}] No remote origin, skipping fetch`);
     }
 
-    // Use epic-level branch instead of story-level branch
-    // This keeps all stories for an epic on one branch, then merges when epic is done
-    const epicBranch = `feature/epic-${this.story.epicNumber}`;
-    this.branch = epicBranch;  // Override story branch with epic branch
+    // Epic-level branch (set in constructor) - all stories in an epic share the same branch
+    const epicBranch = this.branch;
 
-    // Check if epic branch already exists
+    // Check if epic branch already exists (local or remote)
     const { stdout: branches } = await execa('git', ['branch', '-a'], { cwd });
-    const branchExists = branches.includes(epicBranch);
+    const branchLines = branches.split('\n').map(b => b.trim().replace(/^\* /, '')).filter(Boolean);
+    const localBranches = branchLines.filter(b => !b.startsWith('remotes/')).map(b => b);
+    const remoteBranches = branchLines
+      .filter(b => b.startsWith('remotes/origin/'))
+      .map(b => b.replace('remotes/origin/', ''));
 
-    if (branchExists) {
-      // Epic branch exists - checkout
+    const localExists = localBranches.includes(epicBranch);
+    const remoteExists = remoteBranches.includes(epicBranch);
+
+    if (localExists) {
+      // Local branch exists - checkout
       await execa('git', ['checkout', epicBranch], { cwd });
       this.log(`  [${this.story.id}] Checked out epic branch: ${epicBranch}`);
 
@@ -173,6 +184,10 @@ export class StoryWorker {
       } catch (e) {
         // No remote branch yet or no remote - that's ok
       }
+    } else if (remoteExists) {
+      // Branch exists on remote but not locally - create tracking branch
+      await execa('git', ['checkout', '-b', epicBranch, `origin/${epicBranch}`], { cwd });
+      this.log(`  [${this.story.id}] Checked out epic branch from remote: ${epicBranch}`);
     } else {
       // Create epic branch from base
       try {
@@ -200,10 +215,17 @@ export class StoryWorker {
       [this.story.slug]: 'in-progress',
     });
 
-    return { branch: epicBranch, created: !branchExists };
+    return { branch: epicBranch, created: !localExists && !remoteExists };
   }
 
   async runDev() {
+    // Verify we're on the expected branch before proceeding
+    const cwd = this.config.projectRoot;
+    const { stdout: currentBranch } = await execa('git', ['branch', '--show-current'], { cwd });
+    if (currentBranch.trim() !== this.branch) {
+      throw new Error(`Branch mismatch: expected '${this.branch}', but on '${currentBranch.trim()}'`);
+    }
+
     const maxRetries = 2;
     let lastResult = null;
 
@@ -279,9 +301,14 @@ export class StoryWorker {
 
       // Push fixes
       if (this.config.autoPush) {
-        await execa('git', ['push', 'origin', this.branch], {
-          cwd: this.config.projectRoot,
-        });
+        try {
+          await execa('git', ['push', 'origin', this.branch], {
+            cwd: this.config.projectRoot,
+          });
+        } catch (pushError) {
+          this.log(`  [${this.story.id}] Push failed after fixes: ${pushError.message}`);
+          // Continue - push failure after fixes is not fatal, will be pushed later
+        }
       }
     }
 
@@ -322,7 +349,8 @@ export class StoryWorker {
   }
 
   /**
-   * Commit any uncommitted orchestrator artifacts to allow clean git operations
+   * Commit any uncommitted changes to allow clean git operations.
+   * This prevents "uncommitted changes would be overwritten" errors during checkout.
    */
   async commitOrchestratorArtifacts() {
     const cwd = this.config.projectRoot;
@@ -332,11 +360,11 @@ export class StoryWorker {
       return; // Nothing to commit
     }
 
-    this.log(`  [${this.story.id}] Committing orchestrator artifacts`);
+    this.log(`  [${this.story.id}] Committing uncommitted changes before git operations`);
     try {
-      // Add all _bmad-output files (tracked and untracked)
-      await execa('git', ['add', '_bmad-output/'], { cwd });
-      await execa('git', ['commit', '-m', `chore(orchestrator): save artifacts for story ${this.story.id}`], { cwd });
+      // Add all changes (tracked and untracked) to prevent checkout conflicts
+      await execa('git', ['add', '-A'], { cwd });
+      await execa('git', ['commit', '-m', `chore(orchestrator): save work-in-progress for story ${this.story.id}`], { cwd });
     } catch (e) {
       // Might fail if nothing staged - that's ok
       this.log(`  [${this.story.id}] Note: ${e.message}`);
@@ -372,105 +400,6 @@ export class StoryWorker {
     // Stay on epic branch for next story (no checkout back to master)
     this.log(`  [${this.story.id}] Story complete on ${epicBranch}`);
     return { merged: false, branch: epicBranch };
-  }
-
-  /**
-   * Manual merge when gh CLI is not available or fails
-   */
-  async manualMerge() {
-    const cwd = this.config.projectRoot;
-    const baseBranch = this.config.baseBranch;
-
-    this.log(`  [${this.story.id}] Performing manual merge...`);
-
-    // Commit any uncommitted artifacts before checkout
-    await this.commitOrchestratorArtifacts();
-
-    // Checkout base branch
-    await execa('git', ['checkout', baseBranch], { cwd });
-    try {
-      await execa('git', ['pull', 'origin', baseBranch], { cwd });
-    } catch (e) {
-      // No remote - skip pull
-    }
-
-    // Merge the feature branch
-    try {
-      await execa('git', ['merge', this.branch, '--no-ff', '-m',
-        `Merge story ${this.story.id}: ${this.story.title}`], { cwd });
-    } catch (e) {
-      // Merge conflict - try to resolve automatically
-      this.log(`  [${this.story.id}] Merge conflict detected, attempting resolution...`);
-
-      try {
-        // Get list of submodules to handle them specially
-        let submodules = [];
-        try {
-          const { stdout: submoduleList } = await execa('git', ['config', '--file', '.gitmodules', '--get-regexp', 'path'], { cwd });
-          submodules = submoduleList.split('\n').map(line => line.split(' ')[1]).filter(Boolean);
-        } catch {
-          // No .gitmodules or error reading it
-        }
-
-        // Get list of conflicted files
-        const { stdout: conflictList } = await execa('git', ['diff', '--name-only', '--diff-filter=U'], { cwd });
-        const conflictedFiles = conflictList.trim().split('\n').filter(f => f);
-
-        for (const file of conflictedFiles) {
-          if (file.startsWith('_bmad-output/')) {
-            // For orchestrator artifacts, accept feature branch version (theirs)
-            await execa('git', ['checkout', '--theirs', file], { cwd });
-            await execa('git', ['add', file], { cwd });
-            this.log(`  [${this.story.id}] Resolved ${file} (accepted theirs)`);
-          } else if (submodules.includes(file)) {
-            // Submodule conflict - accept base branch version (ours) to avoid issues
-            this.log(`  [${this.story.id}] Submodule conflict: ${file} - accepting ours`);
-            await execa('git', ['checkout', '--ours', file], { cwd });
-            await execa('git', ['add', file], { cwd });
-          } else {
-            // Other conflicts - accept theirs as default for story changes
-            await execa('git', ['checkout', '--theirs', file], { cwd });
-            await execa('git', ['add', file], { cwd });
-            this.log(`  [${this.story.id}] Resolved ${file} (accepted theirs)`);
-          }
-        }
-
-        // Check for any remaining unmerged files
-        const { stdout: remaining } = await execa('git', ['diff', '--name-only', '--diff-filter=U'], { cwd });
-        if (remaining.trim()) {
-          throw new Error(`Unresolved conflicts: ${remaining.trim()}`);
-        }
-
-        // Commit the merge
-        await execa('git', ['commit', '-m', `Merge story ${this.story.id}: ${this.story.title}`], { cwd });
-        this.log(`  [${this.story.id}] Merge conflict resolved`);
-      } catch (e2) {
-        // Can't resolve - abort and throw
-        try {
-          await execa('git', ['merge', '--abort'], { cwd });
-        } catch {
-          // Merge might not be in progress
-        }
-        throw new Error(`Merge failed and could not be resolved: ${e2.message}`);
-      }
-    }
-
-    // Delete the feature branch locally
-    try {
-      await execa('git', ['branch', '-d', this.branch], { cwd });
-    } catch (e) {
-      // Branch might not exist or be protected - that's ok
-    }
-
-    // Push to remote if configured
-    if (this.config.autoPush) {
-      try {
-        await execa('git', ['push', 'origin', baseBranch], { cwd });
-        this.log(`  [${this.story.id}] Pushed to origin/${baseBranch}`);
-      } catch (e) {
-        this.log(`  [${this.story.id}] Push failed (no remote?): ${e.message}`);
-      }
-    }
   }
 
   // ===========================================================================

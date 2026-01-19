@@ -208,12 +208,7 @@ export function queryAuditLogs(filters = {}) {
 }
 
 // Graceful shutdown handlers
+// Let the main server own process termination. Here we only close DB.
 process.on('exit', closeDb);
-process.on('SIGINT', () => {
-  closeDb();
-  process.exit(0);
-});
-process.on('SIGTERM', () => {
-  closeDb();
-  process.exit(0);
-});
+process.on('SIGINT', closeDb);
+process.on('SIGTERM', closeDb);

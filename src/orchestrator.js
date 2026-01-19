@@ -280,7 +280,7 @@ export class Orchestrator {
     const completed = this.results?.filter(r => r.status === 'completed').length ?? 0;
     const failed = this.results?.filter(r => r.status === 'failed').length ?? 0;
     report.push('## Summary');
-    report.push(`- Epics processed: ${this.results.length}`);
+    report.push(`- Epics processed: ${this.results?.length ?? 0}`);
     report.push(`- Completed: ${completed}`);
     report.push(`- Failed: ${failed}`);
     report.push('');

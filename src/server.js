@@ -25,6 +25,7 @@ import { setAuthenticatedClients, broadcast } from './services/websocket.js';
 import { startStuckDetection, stopStuckDetection } from './services/stuckDetector.js';
 import { stopAllWatching } from './services/fileWatcher.js';
 import { getAgentById } from './claude-runner.js';
+import { stopVerificationCleanup } from './services/verification.js';
 import {
   startRun,
   recordEvent,
@@ -175,6 +176,9 @@ class DashboardServer {
 
     // Stop stuck detection interval
     this.stopStuckDetection();
+
+    // Stop verification cache cleanup interval
+    try { stopVerificationCleanup(); } catch {}
 
     // Stop all file watchers
     stopAllWatching();
